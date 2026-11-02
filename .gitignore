@@ -20,3 +20,5 @@ NOTES*.md
 *.rej
 *.log
 __pycache__/
+# macOS metadata files
+._*
