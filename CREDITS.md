@@ -11,7 +11,7 @@ license files from the pinned checkout.
   and its MTP head. Its license, the
   [Qwen Community License 1.0](https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE), comes with the
   weights.
-- **NVIDIA** ([nvidia](https://huggingface.co/nvidia)): the checkpoint this recipe serves by default,
+- **NVIDIA** ([nvidia](https://huggingface.co/nvidia)): the checkpoint this recipe serves,
   [`nvidia/Qwen3.8-Flash-Next-FP4-Local`](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local): Qwen3.8 Flash Next quantized with
   quantization-aware distillation (QAD) against the bf16 model as teacher, using NVIDIA Model Optimizer: NVFP4 routed experts with CSF-compressed
   scale factors, MXFP8 attention, DeltaNet and shared-expert linears, an NVFP4 n-gram table and quantized MTP and vision towers. On NVIDIA's own
@@ -22,8 +22,10 @@ license files from the pinned checkout.
   [`drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47`](https://huggingface.co/drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47): the requantized
   `self_attn.o_proj` weights of 12 layers that `ABLIT=1` grafts onto the checkpoint. Gated; its license is NVIDIA's and the Qwen license. Not part of this repository:
   `scripts/prepare.sh` downloads the sidecar when `ABLIT=1`. `scripts/ablit_view.py` is MiaAI-Lab's own and uses none of the overlay's scripts.
-- **azampatti** ([azampatti](https://huggingface.co/azampatti)): the optional INT4 checkpoint (`CHECKPOINT=int4`),
-  [`azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound):
+- **azampatti** ([azampatti](https://huggingface.co/azampatti)): the checkpoint patch `0024` was written for, which this recipe no longer serves,
+  [`azampatti/Qwen3.8-Flash-Next-FP4-Local-AZ`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-FP4-Local-AZ) (NVIDIA's FP4 at top-5 routing with the healed shared expert; under NVIDIA's
+  and the Qwen license, per its model card), and the INT4 checkpoint it takes that expert from,
+  [`azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound), which this engine does not serve:
   azampatti authored its top-5 expert cut, the shared-expert healing, and the checkpoint. Under the license on
   its model card (the Qwen license).
 - **Intel** ([Intel](https://huggingface.co/Intel)): the AutoRound int4 quantization the INT4-AR checkpoint is built on,
@@ -47,7 +49,7 @@ license files from the pinned checkout.
   The Flash Next CUDA engine in this recipe is ported from TensorFold's Python Flash Next CUDA engine, written by
   Ash Hart and the TensorFold contributors ([contributors](https://github.com/ashhart/TensorFold/graphs/contributors));
   their authorship is recorded in TensorFold's history.
-- **The 17 patches in `patches/` (0001 to 0017) on TensorFold v1.1.4 are written by MiaAI-Lab** (Mia's AI Lab,
+- **The 25 patches in `patches/` (0001 to 0025) on TensorFold v1.1.4 are written by MiaAI-Lab** (Mia's AI Lab,
   [MiaAI-Lab](https://github.com/MiaAI-Lab)), under this
   repository's MIT License. They modify TensorFold's own Flash Next CUDA engine, which is by Ash Hart and the TensorFold
   contributors; that code keeps TensorFold's licenses (see `NOTICE`). Patch by patch:
@@ -73,6 +75,10 @@ license files from the pinned checkout.
   - `0016-decode-shared-expert-side-stream-and-lane-batched-deltanet`: MiaAI-Lab; running the shared expert on a second stream comes from the earlier
     db281878 series.
   - `0017-draft-chain-running-product-stop-rule`: MiaAI-Lab; the stop rule is the one of the earlier db281878 series, re-implemented on v1.1.4.
+  - `0018-video-library-links-on-x86`, `0019-prompt-states-in-pinned-host-memory`, `0020-flash-next-video-on-cuda` (the RTX PRO 6000 port): MiaAI-Lab. `0019` follows the idea of the host-memory prompt tier in MiaAI-Lab's GLM recipe on RTX PRO 6000 (its patch 0015); `0020` connects TensorFold's own `core/qwen_vl/video.zig` and server video path to the CUDA tower.
+  - `0021-host-tests-set-the-kv-format`, `0022-qwen-video-prompt-drops-the-templates-outer-markers`, `0023-fused-down-tile-from-the-cards-sm-count`: MiaAI-Lab.
+  - `0024-config-driven-routing-and-shared-expert-width`: MiaAI-Lab, for azampatti's FP4-Local-AZ checkpoint, along the two changes its model card lists for TensorFold.
+  - `0025-flash-next-static-yarn-x4-on-cuda`: MiaAI-Lab, for the CUDA path. The YaRN table (`rotary_config.zig`) and the static x4 design are TensorFold's, from its Metal engine.
 - **Earlier series on TensorFold db281878** (patches 0011 to 0015, 0021 and 0029 to 0031, on `main`, retired on this branch):
   - NVIDIA FP4 support in the Zig engine (`0011` to `0015`): by MiaAI-Lab, as a port of TensorFold's Python implementation of the same formats (CSF scale
     decoding, MXFP8 linears, the NVFP4 n-gram table and its read-ahead), written by the TensorFold Contributors, to the Zig engine and its CUDA kernels.
@@ -95,7 +101,7 @@ license files from the pinned checkout.
   Apache 2.0).
 - **[b12x](https://github.com/local-inference-lab/b12x)** by local-inference-lab (Apache-2.0): the one-shot RoCE
   all-gather in the engine implements the RoCEnante protocol of b12x by local-inference-lab; that implementation is
-  new code written for this engine. This recipe serves one Spark, so it does not turn that path on.
+  new code written for this engine. This recipe serves one card, so it does not turn that path on.
 - **[Zig](https://ziglang.org)** by the Zig Software Foundation and the Zig contributors (MIT): the language and
   compiler TensorFold's Zig engine is written in and built with (0.17.0).
 
@@ -133,9 +139,9 @@ This recipe no longer applies those patches (the serving path is the Zig engine)
   those rows beyond the window. The admission change in the engine patches and `tools/context_boundary.py` are theirs.
 - **[sparkDash](https://github.com/MiaAI-Lab/sparkDash)** by MiaAI-Lab: the Decode and Prefill benchmarks the README's performance numbers were measured with.
 - The scripts (`start.sh`, `stop.sh`, `scripts/`) and the checks in `tools/` are MiaAI-Lab's. `client.py`,
-  `needle.py`, `toolcheck.py` and `prompt_reuse.py` are adapted from MiaAI-Lab's two-Spark recipe
+  `needle.py`, `toolcheck.py` and `prompt_reuse.py` are adapted from MiaAI-Lab's recipe
   [GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold);
-  `exact.py` is from MiaAI-Lab's Flash Next two-Spark TensorFold recipe.
+  `exact.py` is from MiaAI-Lab's Flash Next TensorFold recipe.
 
 ## Runtime stack
 
@@ -147,7 +153,7 @@ This recipe no longer applies those patches (the serving path is the Zig engine)
   the engine replays their compiled cubins.
 - **[Hugging Face transformers](https://github.com/huggingface/transformers)** (Apache 2.0): the Qwen vision tower's
   modules and the image processor.
-- **[PyAV](https://github.com/PyAV-Org/PyAV)** (BSD-3-Clause) and **[FFmpeg](https://ffmpeg.org/)** (LGPL): video
+- **[FFmpeg](https://ffmpeg.org/)** (LGPL), built statically into `libtfvideo`: video
   decoding. **[Pillow](https://python-pillow.org/)** (MIT-CMU): image decoding.
 - **[Hugging Face Hub](https://huggingface.co/)**: model hosting, the `hf` CLI and `huggingface_hub` (Apache 2.0), and
   the [safetensors](https://github.com/huggingface/safetensors) format (Apache 2.0) the checkpoint ships in.
@@ -158,8 +164,8 @@ This recipe no longer applies those patches (the serving path is the Zig engine)
 
 ## Hardware
 
-- **[NVIDIA DGX Spark](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)** (GB10 Grace Blackwell,
-  128 GB unified memory): every number in the README was measured on one.
+- **[NVIDIA RTX PRO 6000 Blackwell](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000/)** (96 GB, sm_120):
+  every number in the README was measured on one, at a 300 W power limit.
 
 ## README
 

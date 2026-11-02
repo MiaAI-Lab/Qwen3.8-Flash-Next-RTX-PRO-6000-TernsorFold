@@ -1387,7 +1387,7 @@ index 0000000..a5913c3
 +    try std.testing.expectEqual(flashnext.prompt.seqBytes(window), flashnext.lanes_load.streamBytes(.bf16, window, null, chunk, false));
 +}
 +
-+test "the Spark's 24.36 GiB of sequence memory admits five full-window streams in fp8 where bf16 admits three" {
++test "24.36 GiB of sequence memory admits five full-window streams in fp8 where bf16 admits three" {
 +    const bf = flashnext.lanes_load.streamBytes(.bf16, window, draft_ids, chunk, false);
 +    const f8 = flashnext.lanes_load.streamBytes(.fp8, window, draft_ids, chunk, false);
 +    try std.testing.expectEqual(@as(u32, 3), try memory.admit(room(24.36), bf, 0, 16, false));

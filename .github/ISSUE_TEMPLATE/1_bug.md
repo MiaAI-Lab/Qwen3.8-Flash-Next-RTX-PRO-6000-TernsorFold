@@ -23,7 +23,7 @@ assignees: ""
      "Configuration" sections list the settings that affect behavior and the defaults
      shipped in scripts/config.sh. -->
 
-- Hardware: <!-- e.g. 1x DGX Spark (GB10, 128 GB unified memory) -->
+- Hardware: <!-- e.g. 1x RTX PRO 6000 Blackwell (96 GB), 89 GB RAM, desktop on the other card -->
 - Memory available before launch: <!-- `free -g`; other GPU workloads running? -->
 - Image: <!-- `docker images | grep tensorfold-qwen38`, or the ghcr.io tag you pulled -->
 - TensorFold version: <!-- `docker exec qwen38-flash-next-tf tensorfold --version` -->

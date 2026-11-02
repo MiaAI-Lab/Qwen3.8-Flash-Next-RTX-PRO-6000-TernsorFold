@@ -1,4 +1,4 @@
-Qwen3.8-Flash-Next on one DGX Spark with TensorFold
+Qwen3.8-Flash-Next on one RTX PRO 6000 with TensorFold
 Copyright 2026 MiaAI-Lab
 
 This project's own code, scripts and documentation are licensed under the MIT License (see LICENSE).
@@ -48,29 +48,29 @@ Zig
   https://ziglang.org
   Copyright (c) Zig contributors. The MIT License (Expat). Zig is developed by the Zig Software Foundation and the
   Zig contributors.
-  The image build downloads Zig 0.17.0 (zig-aarch64-linux-0.17.0.tar.xz, checked against its sha256) to compile
+  The image build downloads Zig 0.17.0 (zig-x86_64-linux-0.17.0.tar.xz, checked against its sha256) to compile
   TensorFold's Zig engine; the compiler is used in the build stage only and is not part of the published image.
+
+FFmpeg (inside libtfvideo.so)
+  https://ffmpeg.org. GNU Lesser General Public License, version 2.1 or later. The image build downloads FFmpeg 9.0.2's source (checked against its sha256, by TensorFold's
+  tools/zig/build_ffmpeg.sh), unmodified, and links it statically into /opt/tensorfold/native/lib/libtfvideo.so; its license files are in
+  /opt/tensorfold/share/doc/tensorfold/LICENSES-ffmpeg. This repository publishes no image; if you redistribute one, the LGPL's terms for that library apply.
 
 xgrammar and dlpack (inside libtfgrammar.so)
   https://github.com/mlc-ai/xgrammar (MLC-AI team), https://github.com/dmlc/dlpack (DLPack contributors). Apache License, Version 2.0.
-  scripts/prepare.sh copies the prebuilt lib/libtfgrammar.so out of TensorFold's v1.1.4 release archive (aarch64, checked against its
+  scripts/prepare.sh copies the prebuilt lib/libtfgrammar.so out of TensorFold's v1.1.4 release archive (x86_64, checked against its
   SHA-256 in scripts/config.sh) into /opt/tensorfold/native/lib, with the archive's xgrammar and dlpack license and notice files in
   /opt/tensorfold/share/doc/tensorfold/LICENSES-grammar. The library serves structured output and required tool calls; nothing of it is
   modified or compiled here.
 
 Model files (downloaded from Hugging Face by scripts/prepare.sh; not included in this repository or its image)
-  The checkpoint this recipe serves by default, nvidia/Qwen3.8-Flash-Next-FP4-Local, is NVIDIA's quantization-aware-distilled
+  The checkpoint this recipe serves, nvidia/Qwen3.8-Flash-Next-FP4-Local, is NVIDIA's quantization-aware-distilled
   FP4 export (NVIDIA Model Optimizer) of Qwen/Qwen3.8-Flash-Next by the Qwen team (Alibaba). Its use is governed by the NVIDIA Open
   Model Agreement (https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/); the base model is under the
   Qwen Community License 1.0 (https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE).
-  The optional overlay (ABLIT=1), drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47 by drowzeys, replaces 24 self_attn.o_proj tensors (weight and scale of 12 layers) of the
-  checkpoint above; it is gated (Responsible Use Agreement) and inherits the NVIDIA Open Model License and the Qwen Community License 1.0. scripts/prepare.sh downloads
+  The optional overlay (ABLIT=1), drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47 by drowzeys, replaces 24 self_attn.o_proj tensors (weight and scale of 12 layers) of
+  NVIDIA's checkpoint; it is gated (Responsible Use Agreement) and inherits the NVIDIA Open Model License and the Qwen Community License 1.0. scripts/prepare.sh downloads
   its sidecar only when ABLIT=1; none of its files is part of this repository or its image.
-  The optional checkpoint (CHECKPOINT=int4, served by the db281878 recipe on main, not by this branch), azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound, is by azampatti (the
-  top-5 expert cut and the shared-expert healing), built on Intel's AutoRound int4 quantization
-  (Intel/Qwen3.8-Flash-Next-W4A16-AutoRound) and on Saren-Arterius's hybrid checkpoint and FP8 n-gram table
-  (Saren/Qwen3.8-Flash-Next-ple-table-fp8), of Qwen/Qwen3.8-Flash-Next. Per its model card, it is under the Qwen license
-  (https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE).
 
 Third-party software in the image
   The image scripts/prepare.sh builds is based on NVIDIA's PyTorch container nvcr.io/nvidia/pytorch:26.07-py3,
@@ -79,9 +79,8 @@ Third-party software in the image
   Product-Specific Terms for NVIDIA AI Products
   (https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/), which the
   container prints at every start; by pulling or running the image you accept them. The image also contains
-  huggingface_hub (Apache 2.0, for the checkpoint download), and for the vision helper Hugging Face transformers
-  (Apache 2.0), PyAV (BSD-3-Clause) with its bundled FFmpeg libraries (LGPL), Pillow, and TensorFold's Python source
-  (under TensorFold's licenses, above). This project's MIT License covers its own work only, not the software in the
+  huggingface_hub (Apache 2.0, for the checkpoint download), libjpeg-turbo and libwebp's decoder (image input), FFmpeg (above, video
+  input), and TensorFold's engine (under TensorFold's licenses, above). This project's MIT License covers its own work only, not the software in the
   image.
 
 See CREDITS.md for everyone this project builds on.

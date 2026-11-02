@@ -54,7 +54,7 @@ assignees: ""
      move a lot between settings.
 
      If you are comparing two configurations, please use the same sample count for
-     both, and alternate restarts: boot-to-boot noise on a Spark is a few percent.
+     both, and alternate restarts: boot-to-boot noise is a few percent.
 -->
 
 ## Risk

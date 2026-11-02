@@ -1,0 +1,427 @@
+diff --git a/zig/kernels/cuda/flashnext_attn.cu b/zig/kernels/cuda/flashnext_attn.cu
+index e70599b..d86d90e 100644
+--- a/zig/kernels/cuda/flashnext_attn.cu
++++ b/zig/kernels/cuda/flashnext_attn.cu
+@@ -35,12 +35,15 @@ __device__ __forceinline__ float inv_rms(float ss, int width, float eps) {
+     return __fdiv_rn(1.0f, __fsqrt_rn(__fadd_rn(__fdiv_rn(ss, static_cast<float>(width)), eps)));
+ }
+ 
+-// Rotate-half RoPE over the first 2 * half features at `pos`: cos and sin of the fp32 angle (full range reduction).
++// Rotate-half RoPE over the first 2 * half features at `pos`: cos and sin of the fp32 angle (full range reduction), each times
++// inv[half], YaRN's scale past the trained window and exactly 1 up to it (cuda_rotary.zig), which changes no bit.
+ __device__ __forceinline__ float rope(float xn, float xpn, int d, int half, int pos, const float* __restrict__ inv) {
+     if (d >= 2 * half) return xn;
+     const int i = d < half ? d : d - half;
+     float s, c;
+     sincosf(__fmul_rn(static_cast<float>(pos), inv[i]), &s, &c);
++    s = __fmul_rn(s, inv[half]);
++    c = __fmul_rn(c, inv[half]);
+     return d < half ? __fsub_rn(__fmul_rn(xn, c), __fmul_rn(xpn, s)) : __fadd_rn(__fmul_rn(xpn, s), __fmul_rn(xn, c));
+ }
+ 
+diff --git a/zig/src/families/flashnext/cuda_attn.zig b/zig/src/families/flashnext/cuda_attn.zig
+index d10066e..981ae6f 100644
+--- a/zig/src/families/flashnext/cuda_attn.zig
++++ b/zig/src/families/flashnext/cuda_attn.zig
+@@ -221,6 +221,7 @@ pub fn decode(comptime Tri: type, gpa: std.mem.Allocator, driver: *cuda.Driver,
+     var k_scale: [head_dim]f32 = undefined;
+     var i_scale: [index_dim]f32 = undefined;
+     var inv: [half]f32 = undefined;
++    const inv_table = @import("cuda_rotary.zig").table(false);
+     promoteScale(qn.bytes, &q_scale);
+     promoteScale(kn.bytes, &k_scale);
+     promoteScale(iqn.bytes, &i_scale);
+@@ -242,7 +243,7 @@ pub fn decode(comptime Tri: type, gpa: std.mem.Allocator, driver: *cuda.Driver,
+     defer kw_b.free();
+     var iw_b = try cuda.DeviceBuffer.fromHost(driver, std.mem.sliceAsBytes(&i_scale));
+     defer iw_b.free();
+-    var inv_b = try cuda.DeviceBuffer.fromHost(driver, std.mem.sliceAsBytes(&inv));
++    var inv_b = try cuda.DeviceBuffer.fromHost(driver, std.mem.sliceAsBytes(&inv_table));
+     defer inv_b.free();
+     var pos_host: i32 = 0;
+     var pos_b = try cuda.DeviceBuffer.fromHost(driver, std.mem.asBytes(&pos_host));
+diff --git a/zig/src/families/flashnext/cuda_batch_state.zig b/zig/src/families/flashnext/cuda_batch_state.zig
+index 0bc806b..e3d353e 100644
+--- a/zig/src/families/flashnext/cuda_batch_state.zig
++++ b/zig/src/families/flashnext/cuda_batch_state.zig
+@@ -25,7 +25,7 @@ const kv_heads = wt.kv_heads;
+ const head_dim = wt.head_dim;
+ const index_heads = wt.index_heads;
+ const index_dim = wt.index_dim;
+-const half = wt.half;
++const rotary = @import("cuda_rotary.zig");
+ const proj_n = wt.proj_n;
+ const out_k = wt.out_k;
+ const nch = wt.nch;
+@@ -439,12 +439,12 @@ pub const Scratch = struct {
+         n += cap * wt.shared_w * 6 + cap * dims * 4;
+         n += pairs * moe_w * 2 + pairs * dims * 4 + cap * dims * 2;
+         n += cap * dims * 2 + cap * (dims / 32) * 4 + cap * wide * 2 + cap * dims * 2 + 4 * cap * dims * 4;
+-        n += cap * wide * 2 * 2 + cap * streams * 4 + vocab * 2 + cap * vocab + half * 4 + 4096;
++        n += cap * wide * 2 * 2 + cap * streams * 4 + vocab * 2 + cap * vocab + rotary.bytes + 4096;
+         n += cap * dims * 4 + cap * pocket_stride * 4;
+         return n;
+     }
+ 
+-    pub fn alloc(gpa: std.mem.Allocator, d: *const cuda.Driver, stream: cuda.Stream, cap: usize) !Scratch {
++    pub fn alloc(gpa: std.mem.Allocator, d: *const cuda.Driver, stream: cuda.Stream, cap: usize, yarn: bool) !Scratch {
+         var s: Scratch = .{ .cap = cap };
+         errdefer {
+             cuda.completion.drain(d, stream, "Flash Next scratch work did not drain before rollback");
+@@ -516,9 +516,8 @@ pub const Scratch = struct {
+         s.ple_nrow = try s.add(gpa, d, cap * wide * 2);
+         s.logits = try s.add(gpa, d, vocab * 2);
+         s.head_local = try s.add(gpa, d, cap * vocab);
+-        var inv: [half]f32 = undefined;
+-        for (&inv, 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / @as(f64, half)));
+-        s.inv = try s.add(gpa, d, half * 4);
++        const inv = rotary.table(yarn);
++        s.inv = try s.add(gpa, d, rotary.bytes);
+         try s.bufs.items[s.bufs.items.len - 1].uploadAsync(0, std.mem.sliceAsBytes(&inv), stream.handle);
+         s.dummy = try s.add(gpa, d, 4096);
+         try s.bufs.items[s.bufs.items.len - 1].fill8(0, stream.handle);
+diff --git a/zig/src/families/flashnext/cuda_lanes.zig b/zig/src/families/flashnext/cuda_lanes.zig
+index e328964..1b07936 100644
+--- a/zig/src/families/flashnext/cuda_lanes.zig
++++ b/zig/src/families/flashnext/cuda_lanes.zig
+@@ -40,6 +40,8 @@ pub fn Namespace(comptime Tri: type) type {
+         pub const formats: []const []const u8 = &.{ "mlx-q4g32", "modelopt-mixed" };
+         // the model's window: past 2,048 keys the block indexer picks each row's 512 best blocks of 4 (cuda_batch.zig)
+         pub const default_context: i64 = @intCast(prompt.max_tokens);
++        // --context reaches this many times the model's window, with static YaRN x4 past it (cuda_rotary.zig)
++        pub const context_reach: i64 = @intCast(prompt.yarn_factor);
+         // a prompt runs on the batched pass in chunks of this many rows, one a prefill_step: no staggered segments
+         pub const max_segments: u32 = 1;
+         pub const prompt_rows: u32 = @intCast(prompt.batch.default_chunk);
+@@ -283,7 +285,7 @@ pub fn Namespace(comptime Tri: type) type {
+                     s.proposer = null;
+                 }
+                 // a window's rows past the reply's last token (its drafts) still need cache slots
+-                const cap = @min(ids.len + s.max_new + (if (drafting) mtp.max_rows else 0), prompt.max_tokens);
++                const cap = @min(ids.len + s.max_new + (if (drafting) mtp.max_rows else 0), prompt.capLimit(self.context, mtp.max_rows));
+                 gop.value_ptr.* = .{ .seq = (if (self.ranks) |r| r.create(cap) else self.engine.newSeq(cap)) catch |err| {
+                     self.lanes.removeByPtr(gop.key_ptr);
+                     return err;
+@@ -294,7 +296,7 @@ pub fn Namespace(comptime Tri: type) type {
+                     dropLane(self, l);
+                     self.lanes.removeByPtr(gop.key_ptr);
+                 }
+-                if (drafting) l.draft = try mtp.Draft.initFor(mtp.headFormat(self.engine.kv, cap, @min(self.context + mtp.max_rows, prompt.max_tokens), self.head.?.ids.len, self.engine.chunk), self.gpa, self.engine.driver, self.stream, cap, self.head.?.ids.len, self.engine.chunk);
++                if (drafting) l.draft = try mtp.Draft.initFor(mtp.headFormat(self.engine.kv, cap, @min(self.context + mtp.max_rows, prompt.capLimit(self.context, mtp.max_rows)), self.head.?.ids.len, self.engine.chunk), self.gpa, self.engine.driver, self.stream, cap, self.head.?.ids.len, self.engine.chunk);
+                 if (s.images.len != 0) {
+                     const v = self.vision orelse return error.VisionNotEnabled;
+                     l.seq.media = try v.state(ids, s.images);
+diff --git a/zig/src/families/flashnext/cuda_lanes_explain.zig b/zig/src/families/flashnext/cuda_lanes_explain.zig
+index 9f799d7..0c84972 100644
+--- a/zig/src/families/flashnext/cuda_lanes_explain.zig
++++ b/zig/src/families/flashnext/cuda_lanes_explain.zig
+@@ -4,6 +4,7 @@
+ pub fn explain(err: anyerror) ?[]const u8 {
+     return switch (err) {
+         error.PromptTooLong => "the prompt and its reply exceed this server's context window: shorten it or lower max_tokens",
++        error.YarnUnsupported => "--context past the trained window (static YaRN x4) runs on Flash Next's own glue on one rank: serve it without --tp, --slide or TENSORFOLD_CUDA_KERNELS, or at 262,144 tokens or less",
+         error.OutOfDeviceMemory => "the GPU had no memory left for this request's caches: retry once another request ends",
+         error.UnsupportedCheckpoint => "the checkpoint differs from the supported Flash Next CUDA layout; the log names its config field",
+         error.TensorRankDraftSnapshotUnavailable => "tensor-rank MTP snapshots are unavailable: disable the prompt cache for this configuration",
+diff --git a/zig/src/families/flashnext/cuda_lanes_load.zig b/zig/src/families/flashnext/cuda_lanes_load.zig
+index b4f6809..56f6611 100644
+--- a/zig/src/families/flashnext/cuda_lanes_load.zig
++++ b/zig/src/families/flashnext/cuda_lanes_load.zig
+@@ -12,7 +12,9 @@ pub fn open(comptime F: type, gpa: std.mem.Allocator, io: std.Io, ctx: *const cu
+     const Cuda = F.Cuda;
+     const round_streams = 32;
+ 
+-    if (o.context > prompt.max_tokens) return error.ContextOverWindow;
++    if (o.context > prompt.max_context) return error.ContextOverWindow;
++    // static YaRN x4: flashnext_attn.cu's rope, in our own glue on one rank; the learner's passes and a captured set keep the plain rotary
++    if (prompt.yarnFor(o.context) and (o.tp != 1 or captured != null or o.slide)) return error.YarnUnsupported;
+     if (o.segments != 1) return error.UnsupportedOption;
+     if ((o.tp != 1 and o.tp != 2) or o.rank >= o.tp) return error.BadRank;
+     // refused before the stream, the glue or a captured set loads
+@@ -51,6 +53,8 @@ pub fn open(comptime F: type, gpa: std.mem.Allocator, io: std.Io, ctx: *const cu
+     };
+     own.engine = try prompt.Engine.initRank(gpa, io, driver, &own.stream, dir, o.tp, o.rank);
+     own.engine.kv = if (o.kv8) .fp8 else .bf16;
++    own.engine.yarn = prompt.yarnFor(o.context);
++    if (own.engine.yarn) std.log.info("flashnext: a {d}-token window past the trained {d}: every prompt rotates with static YaRN x{d}", .{ o.context, prompt.max_tokens, prompt.yarn_factor });
+     // A discrete card keeps prompt states in the host's memory, where they take no room from the streams (two ranks keep theirs on the
+     // device). TF_FLASHNEXT_HOST_SNAPS=0 keeps them on the card.
+     if (o.tp == 1 and F.envUsize("TF_FLASHNEXT_HOST_SNAPS", 1) != 0) {
+@@ -82,7 +86,7 @@ pub fn open(comptime F: type, gpa: std.mem.Allocator, io: std.Io, ctx: *const cu
+         own.product_streams = F.envUsize("TF_FLASHNEXT_PRODUCT_STREAMS", 2);
+     }
+     errdefer if (own.head) |h| h.deinit();
+-    const window = @min(o.context + mtp.max_rows, prompt.max_tokens);
++    const window = @min(o.context + mtp.max_rows, prompt.capLimit(o.context, mtp.max_rows));
+     // and an attention block's block scores at the window (64 MiB at 262,144 tokens)
+     _ = try own.engine.reserveScores(window, @min(o.context, own.engine.chunk));
+     // a shared round's or a shared verify's scores: up to a drafting round's rows (facts' batch_rows)
+diff --git a/zig/src/families/flashnext/cuda_launch.zig b/zig/src/families/flashnext/cuda_launch.zig
+index f8e2604..a7b6958 100644
+--- a/zig/src/families/flashnext/cuda_launch.zig
++++ b/zig/src/families/flashnext/cuda_launch.zig
+@@ -442,6 +442,7 @@ test {
+     _ = native;
+     _ = @import("cuda_snap.zig");
+     _ = @import("cuda_config.zig");
++    _ = @import("cuda_rotary.zig");
+     _ = @import("cuda_projection_load.zig");
+     _ = @import("cuda_rank_engine.zig");
+     _ = @import("cuda_round_graph.zig");
+diff --git a/zig/src/families/flashnext/cuda_prompt.zig b/zig/src/families/flashnext/cuda_prompt.zig
+index 763367e..f16600e 100644
+--- a/zig/src/families/flashnext/cuda_prompt.zig
++++ b/zig/src/families/flashnext/cuda_prompt.zig
+@@ -101,6 +101,18 @@ fn made(comptime B: type, gpa: std.mem.Allocator, n: usize, src: anytype) ![]B {
+ pub const vocabulary: usize = vocab;
+ /// Prompt plus reply tokens a sequence can hold: the model's window.
+ pub const max_tokens: usize = weights.window;
++/// The longest --context: static YaRN x4's reach.
++pub const max_context: usize = weights.yarn_window;
++pub const yarn_factor: usize = weights.yarn_factor;
++/// Whether a load at --context `context` rotates with YaRN x4: only past the trained window, and then every prompt alike.
++pub fn yarnFor(context: usize) bool {
++    return context > max_tokens;
++}
++/// The tokens one sequence may hold under --context `context`, `rows` of a window's drafts past a long window's last token. Up to the
++/// trained window a sequence stops at it.
++pub fn capLimit(context: usize, rows: usize) usize {
++    return if (yarnFor(context)) context + rows else max_tokens;
++}
+ 
+ /// One position's keys and values in one attention layer, bf16.
+ pub const kv_row_bytes: usize = kv_heads * head_dim * 2;
+@@ -156,6 +168,8 @@ pub const Engine = struct {
+     taught_rows: u64 = 0,
+     /// The attention caches' format of every sequence this engine makes (--kv-cache); set before the first newSeq.
+     kv: kv_format.Kv = .bf16,
++    /// Static YaRN x4 in every rotary kernel (a --context past the trained window); set before the first reserve.
++    yarn: bool = false,
+ 
+     pub fn init(gpa: std.mem.Allocator, io: std.Io, driver: *cuda.Driver, stream: *cuda.Stream, model_dir: []const u8) !*Engine {
+         return initRank(gpa, io, driver, stream, model_dir, 1, 0);
+@@ -372,7 +386,7 @@ pub const Engine = struct {
+             bs.free(e.gpa);
+             e.batch_s = null;
+         }
+-        e.batch_s = try batch.Scratch.alloc(e.gpa, e.driver, e.stream.*, rows);
++        e.batch_s = try batch.Scratch.alloc(e.gpa, e.driver, e.stream.*, rows, e.yarn);
+         return &e.batch_s.?;
+     }
+ 
+@@ -530,6 +544,7 @@ test "a sequence's device bytes grow by the twelve attention layers' keys, value
+     try std.testing.expectEqual(per_token, seqBytes(6) - seqBytes(5));
+     try std.testing.expectEqual(per_token + attn_n * index_dim * 2, seqBytes(5) - seqBytes(4));
+     try std.testing.expect(seqBytes(max_tokens) > max_tokens * per_token);
++    try std.testing.expect(seqBytes(max_context) > max_context * per_token);
+ }
+ 
+ test "fp8 caches take 1,056 + 256 bytes a position and layer, and the pooled blocks stay bf16" {
+diff --git a/zig/src/families/flashnext/cuda_prompt_step.zig b/zig/src/families/flashnext/cuda_prompt_step.zig
+index 9939b26..e7f28d3 100644
+--- a/zig/src/families/flashnext/cuda_prompt_step.zig
++++ b/zig/src/families/flashnext/cuda_prompt_step.zig
+@@ -126,8 +126,7 @@ pub const Scratch = struct {
+         s.gated = try cuda.DeviceBuffer.alloc(driver, out_k * 2);
+         s.gxs_attn = try cuda.DeviceBuffer.alloc(driver, (out_k / 32) * 4);
+         s.dummy = try cuda.DeviceBuffer.alloc(driver, 4096);
+-        var inv: [half]f32 = undefined;
+-        for (&inv, 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / @as(f64, half)));
++        const inv = @import("cuda_rotary.zig").table(false);
+         s.inv = try cuda.DeviceBuffer.fromHost(driver, std.mem.sliceAsBytes(&inv));
+         s.pos = try cuda.DeviceBuffer.alloc(driver, 4);
+         s.ids = try cuda.DeviceBuffer.alloc(driver, 4);
+diff --git a/zig/src/families/flashnext/cuda_prompt_wt.zig b/zig/src/families/flashnext/cuda_prompt_wt.zig
+index e183232..5df6a1e 100644
+--- a/zig/src/families/flashnext/cuda_prompt_wt.zig
++++ b/zig/src/families/flashnext/cuda_prompt_wt.zig
+@@ -45,6 +45,9 @@ pub const index_idw: usize = index_top * index_ratio + index_ratio;
+ pub const dense_keys: usize = (index_top + 1) * index_ratio - 1;
+ /// The model's window (config max_position_embeddings).
+ pub const window: usize = 262144;
++/// Past `window` a load rotates every prompt with static YaRN x4 (cuda_rotary.zig), and --context reaches four times it.
++pub const yarn_factor: usize = 4;
++pub const yarn_window: usize = yarn_factor * window;
+ pub const ple_layer: usize = 1;
+ pub const inj_stride: usize = 16;
+ pub const wts_stride: usize = 48;
+diff --git a/zig/src/families/flashnext/cuda_rotary.zig b/zig/src/families/flashnext/cuda_rotary.zig
+new file mode 100644
+index 0000000..b13752b
+--- /dev/null
++++ b/zig/src/families/flashnext/cuda_rotary.zig
+@@ -0,0 +1,62 @@
++//! RoPE's table for one load, as flashnext_attn.cu's rope reads it: the 32 frequencies, then cos and sin's scale.
++//! Up to the trained window it is the plain rotary at scale 1. A --context past it (patch 0025) takes static YaRN x4 for every prompt,
++//! transformers' _compute_yarn_parameters as the Metal engine has it (rotary_config.zig): the low frequencies a quarter, beta 32 and 1,
++//! cos and sin times 0.1 ln 4 + 1. Attention, the indexer's queries and pooled keys, images' M-RoPE and the MTP head all read this table.
++const std = @import("std");
++const wt = @import("cuda_prompt_wt.zig");
++const config = @import("rotary_config.zig");
++
++const half = wt.half;
++pub const words = half + 1;
++pub const bytes = words * @sizeOf(f32);
++const base: f64 = 10_000_000.0;
++
++pub fn table(yarn: bool) [words]f32 {
++    var out: [words]f32 = undefined;
++    if (yarn) {
++        const y = config.yarn(base, @floatFromInt(wt.yarn_factor), wt.window);
++        @memcpy(out[0..half], &y.freq);
++        out[half] = y.scale;
++    } else {
++        for (out[0..half], 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, base, -@as(f64, @floatFromInt(i)) / @as(f64, half)));
++        out[half] = 1;
++    }
++    return out;
++}
++
++test "up to the trained window: the plain frequencies, scale exactly 1" {
++    const t = table(false);
++    for (t[0..half], 0..) |v, i| try std.testing.expectEqual(@as(f32, @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / 32.0))), v);
++    try std.testing.expectEqual(@as(f32, 1), t[half]);
++    try std.testing.expectEqual(@as(usize, 132), bytes);
++}
++
++test "past it: transformers' YaRN x4 table for base 1e7 over 262,144 tokens" {
++    const t = table(true);
++    // the extrapolated end stays the plain frequency, the interpolated end is a quarter of it, the ramp between them is monotonic
++    const plain = table(false);
++    for (0..14) |i| try std.testing.expectApproxEqRel(plain[i], t[i], 1e-6);
++    for (22..half) |i| try std.testing.expectApproxEqRel(plain[i] / 4, t[i], 1e-6);
++    for (1..half) |i| try std.testing.expect(t[i] < t[i - 1]);
++    try std.testing.expectApproxEqRel(@as(f32, 1.138629436111989), t[half], 1e-6);
++    // the first words of the table replay.zig holds from transformers
++    const want = [_]f32{ 1.0, 0.6042963862419128, 0.36517414450645447, 0.22067339718341827, 0.1333521455526352, 0.08058421313762665, 0.04869675263762474, 0.02942727319896221, 0.017782794311642647 };
++    for (want, t[0..want.len]) |w, g| try std.testing.expectApproxEqRel(w, g, 1e-6);
++}
++
++test "the window's limits: plain to 262,144, YaRN past it up to 1,048,576" {
++    const prompt = @import("cuda_prompt.zig");
++    try std.testing.expect(!prompt.yarnFor(262144));
++    try std.testing.expect(prompt.yarnFor(262145));
++    try std.testing.expectEqual(@as(usize, 1048576), prompt.max_context);
++    try std.testing.expectEqual(@as(usize, 262144), prompt.capLimit(262144, 8));
++    try std.testing.expectEqual(@as(usize, 262144), prompt.capLimit(131072, 8));
++    try std.testing.expectEqual(@as(usize, 1000008), prompt.capLimit(1000000, 8));
++}
++
++test "a million tokens' fp8 caches on the sizes the recipe plans with" {
++    const prompt = @import("cuda_prompt.zig");
++    const n = prompt.seqBytesFor(.fp8, 1_000_000);
++    const per = @as(f64, @floatFromInt(n)) / 1_000_000;
++    try std.testing.expect(per > 16_000 and per < 17_888);
++}
+diff --git a/zig/src/families/flashnext/cuda_score.zig b/zig/src/families/flashnext/cuda_score.zig
+index 71b6e57..0607ee8 100644
+--- a/zig/src/families/flashnext/cuda_score.zig
++++ b/zig/src/families/flashnext/cuda_score.zig
+@@ -6,7 +6,7 @@ const mtp = @import("cuda_mtp.zig");
+ /// One logit per label at the row after `ids` (bf16 widened), and the row's logsumexp in f64 when `mass` (else 0).
+ pub fn labels(comptime Tri: type, e: *prompt.Engine, tri: Tri, context: usize, ids: []const u32, wanted: []const u32, logits: []f64, mass: bool) !f64 {
+     // every refusal before a cache is made
+-    if (ids.len == 0 or ids.len > context or ids.len > prompt.max_tokens) return error.PromptOutsideContext;
++    if (ids.len == 0 or ids.len > context or ids.len > prompt.max_context) return error.PromptOutsideContext;
+     if (wanted.len == 0 or wanted.len != logits.len) return error.UnexpectedTensor;
+     for (wanted) |t| if (t >= prompt.vocabulary) return error.LabelOutsideVocabulary;
+     var seq = try e.newSeq(ids.len);
+diff --git a/zig/src/families/flashnext/cuda_sequence_completion_test.zig b/zig/src/families/flashnext/cuda_sequence_completion_test.zig
+index 80b87a0..13de825 100644
+--- a/zig/src/families/flashnext/cuda_sequence_completion_test.zig
++++ b/zig/src/families/flashnext/cuda_sequence_completion_test.zig
+@@ -174,7 +174,7 @@ test "Flash Next completion: scratch growth refusal after queued inverse-frequen
+     d.api.cuEventDestroy_v2 = Fake.destroy;
+     d.api.cuMemcpyHtoDAsync_v2 = Fake.copyAndRefuseNext;
+     const stream: cuda.Stream = .{ .d = &d, .handle = @ptrFromInt(330) };
+-    try t.expectError(error.OutOfDeviceMemory, prompt.batch.Scratch.alloc(t.allocator, &d, stream, 1));
++    try t.expectError(error.OutOfDeviceMemory, prompt.batch.Scratch.alloc(t.allocator, &d, stream, 1, false));
+     const cleanup_syncs = Fake.syncs;
+     _ = try cuda.memory.setAllocationLimit(null);
+     try stream.synchronize(); // also clean the old-main control's deliberately unfinished copy source
+diff --git a/zig/src/native/cuda.zig b/zig/src/native/cuda.zig
+index 879c137..9ee880a 100644
+--- a/zig/src/native/cuda.zig
++++ b/zig/src/native/cuda.zig
+@@ -199,11 +199,12 @@ fn openWith(comptime F: type, a: Allocator, gpa: Allocator, io: std.Io, o: api.O
+         return null;
+     }
+     const native = modelContext(a, io, o.dir);
+-    const window = contextWindow(o.context, native, F.default_context) catch |e| {
++    const reach: i64 = if (@hasDecl(F, "context_reach")) F.context_reach else 1;
++    const window = windows.contextWithin(o.context, native, F.default_context, reach) catch |e| {
+         problem.* = switch (e) {
+             error.Negative => try std.fmt.allocPrint(a, "--context {d}: a token count, or 0 for the model's window", .{o.context.?}),
+             error.NoNative => "--context 0 asks for the model's window, and its config.json names none: give a token count",
+-            error.PastNative => try std.fmt.allocPrint(a, "--context {d} exceeds this model's {d}-token window", .{ o.context.?, native }),
++            error.PastNative => if (reach > 1) try std.fmt.allocPrint(a, "--context {d} exceeds this model's {d}-token window and its YaRN x{d} reach ({d})", .{ o.context.?, native, reach, reach * native }) else try std.fmt.allocPrint(a, "--context {d} exceeds this model's {d}-token window", .{ o.context.?, native }),
+         };
+         return null;
+     };
+diff --git a/zig/src/native/cuda_window.zig b/zig/src/native/cuda_window.zig
+index 355dc4d..16623ff 100644
+--- a/zig/src/native/cuda_window.zig
++++ b/zig/src/native/cuda_window.zig
+@@ -15,13 +15,29 @@ pub fn modelContext(a: Allocator, io: std.Io, dir: []const u8) i64 {
+ 
+ /// Prompt plus reply tokens a request may use: --context (0: the model's window), else the family default within it.
+ pub fn contextWindow(requested: ?i64, native: i64, default: i64) error{ Negative, NoNative, PastNative }!i64 {
++    return contextWithin(requested, native, default, 1);
++}
++
++/// contextWindow for a family that serves `reach` times the model's window when asked by name; nothing past the model's window by default.
++pub fn contextWithin(requested: ?i64, native: i64, default: i64, reach: i64) error{ Negative, NoNative, PastNative }!i64 {
+     const r = requested orelse return if (native > 0) @min(default, native) else default;
+     if (r < 0) return error.Negative;
+     if (r == 0) return if (native > 0) native else error.NoNative;
+-    if (native > 0 and r > native) return error.PastNative;
++    if (native > 0 and r > reach * native) return error.PastNative;
+     return r;
+ }
+ 
++test "a family's reach: a long window only when asked by name, the model's window otherwise" {
++    try std.testing.expectEqual(@as(i64, 262144), try contextWithin(null, 262144, 262144, 4));
++    try std.testing.expectEqual(@as(i64, 262144), try contextWithin(0, 262144, 262144, 4));
++    try std.testing.expectEqual(@as(i64, 262144), try contextWithin(262144, 262144, 262144, 4));
++    try std.testing.expectEqual(@as(i64, 262145), try contextWithin(262145, 262144, 262144, 4));
++    try std.testing.expectEqual(@as(i64, 1000000), try contextWithin(1000000, 262144, 262144, 4));
++    try std.testing.expectEqual(@as(i64, 1048576), try contextWithin(1048576, 262144, 262144, 4));
++    try std.testing.expectError(error.PastNative, contextWithin(1048577, 262144, 262144, 4));
++    try std.testing.expectError(error.PastNative, contextWithin(262145, 262144, 262144, 1));
++}
++
+ test "context windows: the family default inside the model's, 0 for the model's, never past it" {
+     try std.testing.expectEqual(@as(i64, 16384), try contextWindow(null, 262144, 16384));
+     try std.testing.expectEqual(@as(i64, 4096), try contextWindow(null, 4096, 16384));
+diff --git a/zig/tests/cuda/flashnext_attn_tests.zig b/zig/tests/cuda/flashnext_attn_tests.zig
+index ec86527..619ddf6 100644
+--- a/zig/tests/cuda/flashnext_attn_tests.zig
++++ b/zig/tests/cuda/flashnext_attn_tests.zig
+@@ -24,8 +24,9 @@ const idw = 2052;
+ 
+ /// RoPE's inverse frequencies as the pass uploads them (base 10,000,000 over 32 pairs).
+ fn inverse(r: *Rig) ![]f32 {
+-    const inv = try r.a.alloc(f32, half);
+-    for (inv, 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / half));
++    const inv = try r.a.alloc(f32, half + 1);
++    for (inv[0..half], 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / half));
++    inv[half] = 1; // cos and sin's scale: rope's, and YaRN's only past the trained window
+     return inv;
+ }
+ 
+diff --git a/zig/tests/cuda/flashnext_kv8_tests.zig b/zig/tests/cuda/flashnext_kv8_tests.zig
+index e0615ab..bc6dc8d 100644
+--- a/zig/tests/cuda/flashnext_kv8_tests.zig
++++ b/zig/tests/cuda/flashnext_kv8_tests.zig
+@@ -23,8 +23,9 @@ const idw = 2052;
+ const key_stride = kvf.key_stride;
+ 
+ fn inverse(r: *Rig) ![]f32 {
+-    const inv = try r.a.alloc(f32, half);
+-    for (inv, 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / half));
++    const inv = try r.a.alloc(f32, half + 1);
++    for (inv[0..half], 0..) |*o, i| o.* = @floatCast(std.math.pow(f64, 10_000_000.0, -@as(f64, @floatFromInt(i)) / half));
++    inv[half] = 1; // cos and sin's scale: rope's, and YaRN's only past the trained window
+     return inv;
+ }
+ 

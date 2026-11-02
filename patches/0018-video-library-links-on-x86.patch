@@ -1,0 +1,24 @@
+diff --git a/zig/build/video.zig b/zig/build/video.zig
+index 3e33b3f..d1296b3 100644
+--- a/zig/build/video.zig
++++ b/zig/build/video.zig
+@@ -56,6 +56,9 @@ pub fn steps(b: *std.Build, target: std.Build.ResolvedTarget, host_tests: *std.B
+     }) |a| mod.addObjectFile(root.path(b, b.pathJoin(&.{ "lib", a })));
+     mod.linkSystemLibrary("m", .{});
+     const lib = b.addLibrary(.{ .name = "tfvideo", .linkage = .dynamic, .root_module = mod });
++    // Only the tf_video_ API leaves the library. FFmpeg's x86 assembly reads its own tables by PC-relative address, which the linker refuses against a symbol
++    // another library could replace (FFmpeg's own shared build links with -Bsymbolic for this); aarch64's assembly does not, so only an x86_64 build needs it.
++    lib.setVersionScript(b.path("zig/src/video/tf_video.map"));
+     step.dependOn(&b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .{ .custom = "native/lib" } } }).step);
+ }
+ 
+diff --git a/zig/src/video/tf_video.map b/zig/src/video/tf_video.map
+new file mode 100644
+index 0000000..7bca94c
+--- /dev/null
++++ b/zig/src/video/tf_video.map
+@@ -0,0 +1,4 @@
++{
++  global: tf_video_*;
++  local: *;
++};

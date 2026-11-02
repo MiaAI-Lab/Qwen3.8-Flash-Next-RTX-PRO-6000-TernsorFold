@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Decode (prose and code, 1..5 concurrent streams) and prefill (4k..128k) speeds against a server, using tools/bench.py for the request, the prose generator and the stats names.
+"""Decode (prose and code, 1..3 concurrent streams) and prefill (4k..128k) speeds against a server, using tools/bench.py for the request, the prose generator and the stats names.
 
-usage: bench.py URL [--decode-only] [--prefill-only] [--streams 1,2,3,4,5] [--sizes 5000,10000,...] (sizes count generated words: about 0.8 prompt tokens each, so the defaults give 4k to 126k tokens) [--tokens 256]
+usage: bench.py URL [--decode-only] [--prefill-only] [--streams 1,2,3] [--sizes 5000,10000,...] (sizes count generated words: about 0.8 prompt tokens each, so the defaults give 4k to 126k tokens) [--tokens 256]
 Decode: total tok/s = sum of the server's per-stream decode speeds, greedy, median of --reps runs.
 Prefill: fresh prose each run (nothing resumed from the prompt cache but the chat template's opening, a few dozen tokens every prompt shares and
 the row shows as "cached"), prompt tokens the server prefilled (prompt minus cached) / its prefill seconds.
@@ -41,7 +41,7 @@ def main():
     p.add_argument("url")
     p.add_argument("--decode-only", action="store_true")
     p.add_argument("--prefill-only", action="store_true")
-    p.add_argument("--streams", default="1,2,3,4,5")
+    p.add_argument("--streams", default="1,2,3")
     p.add_argument("--tokens", type=int, default=256)
     p.add_argument("--sizes", default="5000,10000,20000,40000,80000,160000")
     p.add_argument("--reps", type=int, default=3)

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Prepare this Spark to serve Qwen3.8-Flash-Next ($QUANT_LABEL; see CHECKPOINT in scripts/config.sh) with TensorFold's Zig engine (tensorfold-native, one GPU):
-#   1. preflight: docker, the GPU, disk
-#   2. the image: tensorfold-native built from TensorFold (TF_REF) plus patches/*.patch with Zig, on NVIDIA's
-#      PyTorch container (kernels are embedded in the binary), with libjpeg-turbo and libwebp's decoder; pulled prebuilt when a matching tag is reachable (PULL=0 skips
-#      that), else built locally
-#   3. the checkpoint in the Hugging Face cache (~96 GiB for the NVIDIA FP4 default, ~122 GiB for CHECKPOINT=int4), at its pinned revision
-#   4. verify it: every shard its index names is there, and it is a checkpoint format this engine serves (ModelOpt NVFP4 or GPTQ int4)
+# Prepare this x86_64 host to serve Qwen3.8-Flash-Next ($QUANT_LABEL; see CHECKPOINT in scripts/config.sh) with TensorFold's Zig engine (tensorfold-native) on one RTX PRO 6000:
+#   1. preflight: x86_64, docker, the GPU, disk
+#   2. the image: tensorfold-native built from TensorFold (TF_REF) plus patches/*.patch with Zig for sm_120 (CUDA_SM), on NVIDIA's
+#      PyTorch container (kernels are embedded in the binary), with libjpeg-turbo, libwebp's decoder and libtfvideo over FFmpeg (PULL=1 with GHCR_IMAGE set pulls a matching image first)
+#   3. the checkpoint in the Hugging Face cache (~96 GiB, NVIDIA's FP4), at its pinned revision
+#   4. verify it: every shard its index names is there, and it is the checkpoint format this engine serves (ModelOpt NVFP4)
 #   5. ABLIT=1 only: the Keys overlay's sidecar (~190 MB, gated) and the checkpoint folder with it grafted in (scripts/ablit_view.py)
 # ./start.sh runs this by itself when needed. Safe to re-run: every step skips work that is already done.
 # Pass --rebuild to rebuild the image from scratch.
@@ -27,6 +26,7 @@ exec 9>"$STATE_DIR/prepare.lock"
 flock -n 9 || die "another prepare.sh is already running; wait for it or stop it"
 
 log "Preflight checks"
+[[ "$(uname -m)" == x86_64 ]] || die "this recipe builds for x86_64 and sm_120 (RTX PRO 6000); this host is $(uname -m)"
 _mem_here=$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)
 if (( _mem_here < MEM_FLOOR_GIB )); then
   _msg="only ${_mem_here} GiB MemAvailable (the floor is MEM_FLOOR_GIB=$MEM_FLOOR_GIB): stop other work first"
@@ -36,7 +36,9 @@ log "Memory: ${_mem_here} GiB MemAvailable (floor $MEM_FLOOR_GIB)"
 command -v docker >/dev/null || die "docker is not installed"
 docker info >/dev/null 2>&1 || die "cannot talk to the docker daemon (is your user in the docker group?)"
 if ! command -v nvidia-smi >/dev/null; then warn "nvidia-smi not found"
-elif ! nvidia-smi -L >/dev/null 2>&1; then warn "nvidia-smi failed: is the NVIDIA driver working?"; fi
+elif ! nvidia-smi -L >/dev/null 2>&1; then warn "nvidia-smi failed: is the NVIDIA driver working?"
+elif [[ -z "$(gpu_name)" ]]; then die "no GPU with index $GPU: set GPU to an index nvidia-smi lists"
+else log "GPU $GPU: $(gpu_name) (kernels for sm_$CUDA_SM)"; fi
 docker info 2>/dev/null | grep -qi nvidia || warn "docker does not list an nvidia runtime; --gpus all may fail"
 
 PATCHES_HASH=$(image_hash)
@@ -90,7 +92,7 @@ fi
 log "Disk: $(free_gb "$HF_CACHE") GB free under $HF_CACHE ($ckpt_what)"
 
 prebuilt=$(prebuilt_image)
-if [[ $REBUILD -eq 0 && "${PULL:-1}" == 1 && "$built_hash" != "$PATCHES_HASH" ]]; then
+if [[ $REBUILD -eq 0 && "${PULL:-0}" == 1 && -n "$GHCR_IMAGE" && "$built_hash" != "$PATCHES_HASH" ]]; then
   log "Pulling the prebuilt image $prebuilt (PULL=0 builds instead)"
   if docker pull "$prebuilt" &&
      [[ "$(docker image inspect -f '{{index .Config.Labels "tf.patches"}}' "$prebuilt")" == "$PATCHES_HASH" ]]; then
@@ -102,7 +104,7 @@ if [[ $REBUILD -eq 0 && "${PULL:-1}" == 1 && "$built_hash" != "$PATCHES_HASH" ]]
 fi
 if [[ $REBUILD -eq 1 || "$built_hash" != "$PATCHES_HASH" ]]; then
   docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 && [[ $REBUILD -eq 0 ]] || { log "Pulling base image $BASE_IMAGE"; docker pull "$BASE_IMAGE"; }
-  log "Building $IMAGE (TensorFold ${TF_REF:0:12}, Zig $ZIG_VERSION, patches $PATCHES_HASH, TP=1 kernel set)"
+  log "Building $IMAGE (TensorFold ${TF_REF:0:12}, Zig $ZIG_VERSION, patches $PATCHES_HASH, sm_$CUDA_SM kernels)"
   ctx=$(mktemp -d "$STATE_DIR/build.XXXXXX")
   trap 'rm -rf -- "$ctx"' EXIT
   mkdir -p "$ctx/patches"
@@ -113,7 +115,8 @@ if [[ $REBUILD -eq 1 || "$built_hash" != "$PATCHES_HASH" ]]; then
     --build-arg ZIG_VERSION="$ZIG_VERSION" --build-arg ZIG_SHA256="$ZIG_SHA256" \
     --build-arg LIBJPEG_TURBO_VERSION="$LIBJPEG_TURBO_VERSION" --build-arg LIBJPEG_TURBO_SHA256="$LIBJPEG_TURBO_SHA256" \
     --build-arg LIBWEBP_VERSION="$LIBWEBP_VERSION" --build-arg LIBWEBP_SHA256="$LIBWEBP_SHA256" \
-    --build-arg TF_RELEASE_VERSION="$TF_RELEASE_VERSION" --build-arg TF_RELEASE_AARCH64_SHA256="$TF_RELEASE_AARCH64_SHA256" \
+    --build-arg TF_RELEASE_VERSION="$TF_RELEASE_VERSION" --build-arg TF_RELEASE_X86_64_SHA256="$TF_RELEASE_X86_64_SHA256" \
+    --build-arg CUDA_SM="$CUDA_SM" --build-arg ZIG_CPU="$ZIG_CPU" \
     --build-arg PATCHES_HASH="$PATCHES_HASH" \
     -f - "$ctx" <<'DOCKERFILE'
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.07-py3
@@ -139,21 +142,21 @@ RUN cd /src && \
 
 FROM ${BASE_IMAGE} AS grammar
 ARG TF_RELEASE_VERSION
-ARG TF_RELEASE_AARCH64_SHA256
+ARG TF_RELEASE_X86_64_SHA256
 RUN mkdir -p /opt/tfrel && cd /tmp && \
-    curl -fsSL -o tf-rel.tar.gz "https://github.com/ashhart/TensorFold/releases/download/v${TF_RELEASE_VERSION}/tensorfold-${TF_RELEASE_VERSION}-linux-aarch64.tar.gz" && \
-    echo "${TF_RELEASE_AARCH64_SHA256}  tf-rel.tar.gz" | sha256sum -c - && \
+    curl -fsSL --retry 3 -o tf-rel.tar.gz "https://github.com/ashhart/TensorFold/releases/download/v${TF_RELEASE_VERSION}/tensorfold-${TF_RELEASE_VERSION}-linux-x86_64.tar.gz" && \
+    echo "${TF_RELEASE_X86_64_SHA256}  tf-rel.tar.gz" | sha256sum -c - && \
     tar -xzf tf-rel.tar.gz -C /opt/tfrel --strip-components=1 \
-      tensorfold-${TF_RELEASE_VERSION}-linux-aarch64/lib/libtfgrammar.so \
-      tensorfold-${TF_RELEASE_VERSION}-linux-aarch64/LICENSES/xgrammar-Apache-2.0.txt \
-      tensorfold-${TF_RELEASE_VERSION}-linux-aarch64/LICENSES/xgrammar-NOTICE.txt \
-      tensorfold-${TF_RELEASE_VERSION}-linux-aarch64/LICENSES/dlpack-Apache-2.0.txt && \
+      tensorfold-${TF_RELEASE_VERSION}-linux-x86_64/lib/libtfgrammar.so \
+      tensorfold-${TF_RELEASE_VERSION}-linux-x86_64/LICENSES/xgrammar-Apache-2.0.txt \
+      tensorfold-${TF_RELEASE_VERSION}-linux-x86_64/LICENSES/xgrammar-NOTICE.txt \
+      tensorfold-${TF_RELEASE_VERSION}-linux-x86_64/LICENSES/dlpack-Apache-2.0.txt && \
     test -s /opt/tfrel/lib/libtfgrammar.so
 
 FROM ${BASE_IMAGE} AS build
 ARG ZIG_VERSION
 ARG ZIG_SHA256
-RUN curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-aarch64-linux-${ZIG_VERSION}.tar.xz" && \
+RUN curl -fsSL --retry 3 -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" && \
     echo "${ZIG_SHA256}  /tmp/zig.tar.xz" | sha256sum -c - && \
     mkdir -p /opt/zig && tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1 && rm /tmp/zig.tar.xz && \
     /opt/zig/zig version
@@ -166,9 +169,20 @@ COPY patches /opt/tf-patches
 RUN cd /tensorfold && \
     for p in /opt/tf-patches/*.patch; do [ -e "$p" ] || continue; echo "applying $p"; git apply --check "$p" && git apply "$p" || exit 1; done
 # fatbins + native only: the default install also builds tf-cuda-test, which does not compile on 1.1.4 (contract_controls.cu, w4a8_tests.zig)
-RUN cd /tensorfold && /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Doptimize=fast --prefix /opt/tensorfold \
+# -Dsm: the SASS target (120 for RTX PRO 6000 Blackwell; TensorFold's default, 121, does not load on this card). -Dcpu: the host code's target
+ARG CUDA_SM
+ARG ZIG_CPU
+RUN cd /tensorfold && /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm="${CUDA_SM}" -Dcpu="${ZIG_CPU}" -Doptimize=fast --prefix /opt/tensorfold \
       -j"$(nproc)" fatbins native && \
     test -x /opt/tensorfold/native/bin/tensorfold-native
+# Video input: libtfvideo over a static FFmpeg 9.0.2 (TensorFold's own build_ffmpeg.sh, which checks the source's sha256), loaded from native/lib beside the server.
+# Without it the server answers "video inputs are unsupported". nasm: FFmpeg's x86 decoders.
+RUN apt-get update && apt-get install -y --no-install-recommends nasm && rm -rf /var/lib/apt/lists/* && \
+    cd /tensorfold && tools/zig/build_ffmpeg.sh /opt/ffmpeg /tmp/ffmpeg-src && \
+    /opt/zig/zig build video -Dffmpeg=/opt/ffmpeg -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm="${CUDA_SM}" -Dcpu="${ZIG_CPU}" --prefix /opt/tensorfold && \
+    test -s /opt/tensorfold/native/lib/libtfvideo.so && \
+    mkdir -p /opt/tensorfold/share/doc/tensorfold/LICENSES-ffmpeg && cp -a /tmp/ffmpeg-src/ffmpeg-9.0.2/COPYING.LGPLv2.1 /tmp/ffmpeg-src/ffmpeg-9.0.2/LICENSE.md /opt/tensorfold/share/doc/tensorfold/LICENSES-ffmpeg/ && \
+    rm -rf /tmp/ffmpeg-src
 RUN mkdir -p /opt/tensorfold/share/doc/tensorfold && cd /tensorfold && \
     for f in LICENSE LICENSE.md LICENSES NOTICE THIRD_PARTY_NOTICES.md; do \
       if [ -e "$f" ]; then cp -a "$f" /opt/tensorfold/share/doc/tensorfold/ || exit 1; fi; done
@@ -182,7 +196,8 @@ COPY --from=grammar /opt/tfrel/lib/libtfgrammar.so /opt/tensorfold/native/lib/li
 COPY --from=grammar /opt/tfrel/LICENSES /opt/tensorfold/share/doc/tensorfold/LICENSES-grammar
 RUN ln -s /opt/tensorfold/native/bin/tensorfold-native /usr/local/bin/tensorfold-native
 ARG PATCHES_HASH
-LABEL tf.patches=${PATCHES_HASH} tf.kernels=embedded
+ARG CUDA_SM
+LABEL tf.patches=${PATCHES_HASH} tf.kernels=embedded tf.sm=${CUDA_SM}
 ENV HF_HOME=/root/.cache/huggingface CUDA_CACHE_PATH=/cache/nv \
     TENSORFOLD_LIBTURBOJPEG=/opt/tensorfold/lib/libturbojpeg.so.0 TENSORFOLD_LIBWEBP=/opt/tensorfold/lib/libwebpdecoder.so.3
 WORKDIR /workspace
@@ -193,6 +208,8 @@ else
 fi
 docker run --rm --network none --entrypoint test "$IMAGE" -x /opt/tensorfold/native/bin/tensorfold-native ||
   die "$IMAGE has no tensorfold-native"
+docker run --rm --network none --entrypoint test "$IMAGE" -s /opt/tensorfold/native/lib/libtfvideo.so ||
+  die "$IMAGE has no libtfvideo: video input would be refused"
 log "Image $IMAGE: tensorfold-native, kernel set present"
 
 command -v hf >/dev/null || warn "host 'hf' CLI not found, downloading from inside the container"
@@ -221,7 +238,7 @@ log "Checkpoint: $dir/snapshots/$rev ($(du -shL "$dir/snapshots/$rev" | cut -f1)
 
 log "Verifying the checkpoint"
 CHECK_PY='
-import glob, json, os, sys
+import json, os, sys
 d = sys.argv[1]
 cfg = json.load(open(os.path.join(d, "config.json")))
 if cfg.get("model_type") != "qwen4_exp":
@@ -233,13 +250,8 @@ if kind == "modelopt":
     if "NVFP4" not in algos:
         sys.exit("ModelOpt checkpoint without NVFP4 layers (quant_algo %s)" % sorted(algos))
     what = "ModelOpt %s (%s)" % (q.get("quant_algo"), "+".join(sorted(algos)))
-elif kind == "gptq" and q.get("bits") == 4:
-    table = [f for f in glob.glob(os.path.join(d, "ple-table", "*.safetensors")) if os.path.getsize(f) > 0]
-    if not table:
-        sys.exit("no n-gram table files in ple-table/")
-    what = "AutoRound int4 g%s, %d n-gram table files" % (q.get("group_size"), len(table))
 else:
-    sys.exit("neither a ModelOpt NVFP4 nor a GPTQ-format int4 checkpoint (quant_method %r, bits %r)" % (kind, q.get("bits")))
+    sys.exit("not a ModelOpt NVFP4 checkpoint, the format this engine serves (quant_method %r, bits %r)" % (kind, q.get("bits")))
 idx = json.load(open(os.path.join(d, "model.safetensors.index.json")))
 shards = sorted(set(idx["weight_map"].values()))
 bad = [s for s in shards if not os.path.isfile(os.path.join(d, s)) or os.path.getsize(os.path.join(d, s)) == 0]

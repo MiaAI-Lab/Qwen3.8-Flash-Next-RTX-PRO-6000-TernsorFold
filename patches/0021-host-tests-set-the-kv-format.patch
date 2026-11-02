@@ -1,0 +1,72 @@
+diff --git a/zig/src/families/flashnext/cuda_images_test.zig b/zig/src/families/flashnext/cuda_images_test.zig
+index 624b90d..5633177 100644
+--- a/zig/src/families/flashnext/cuda_images_test.zig
++++ b/zig/src/families/flashnext/cuda_images_test.zig
+@@ -41,6 +41,7 @@ fn run(comptime Cuda: type, comptime open: anytype, comptime drop: anytype, draf
+     engine.stream = &stream;
+     engine.chunk = 16;
+     engine.eos = 7;
++    engine.kv = .bf16;
+     engine.round_graph = .{};
+     var ids = [_]u32{1};
+     var head: mtp.Head = undefined;
+@@ -137,6 +138,7 @@ fn release(comptime Cuda: type, comptime open: anytype) !void {
+     engine.stream = &stream;
+     engine.chunk = 16;
+     engine.eos = 7;
++    engine.kv = .bf16;
+     engine.round_graph = .{};
+     var self: Cuda = undefined;
+     self.gpa = a;
+diff --git a/zig/src/families/flashnext/cuda_lanes_admission_test.zig b/zig/src/families/flashnext/cuda_lanes_admission_test.zig
+index 5589587..dbb2e17 100644
+--- a/zig/src/families/flashnext/cuda_lanes_admission_test.zig
++++ b/zig/src/families/flashnext/cuda_lanes_admission_test.zig
+@@ -15,6 +15,7 @@ fn run(comptime Cuda: type, comptime open: anytype, comptime drop: anytype, coun
+     engine.driver = &driver;
+     engine.stream = &stream;
+     engine.eos = 7;
++    engine.kv = .bf16;
+     engine.chunk = 16;
+     engine.round_graph = .{};
+     var ids = [_]u32{1};
+diff --git a/zig/src/families/flashnext/cuda_lanes_restore_test.zig b/zig/src/families/flashnext/cuda_lanes_restore_test.zig
+index aa441f6..edf3e6c 100644
+--- a/zig/src/families/flashnext/cuda_lanes_restore_test.zig
++++ b/zig/src/families/flashnext/cuda_lanes_restore_test.zig
+@@ -60,6 +60,7 @@ pub fn run(comptime Cuda: type, comptime open: anytype, comptime restore: anytyp
+     engine.driver = &driver;
+     engine.stream = &stream;
+     engine.eos = 7;
++    engine.kv = .bf16;
+     engine.chunk = 16;
+     engine.round_graph = .{};
+     var pair: [2]std.posix.socket_t = undefined;
+diff --git a/zig/src/families/flashnext/cuda_sequence_completion_test.zig b/zig/src/families/flashnext/cuda_sequence_completion_test.zig
+index ddf4e69..80b87a0 100644
+--- a/zig/src/families/flashnext/cuda_sequence_completion_test.zig
++++ b/zig/src/families/flashnext/cuda_sequence_completion_test.zig
+@@ -97,6 +97,7 @@ test "Flash Next completion: allocation refusals drain fills before every constr
+         e.driver = &d;
+         e.stream = &stream;
+         e.eos = 1;
++        e.kv = .bf16;
+         e.round_graph = .{};
+         try t.expectError(error.OutOfDeviceMemory, e.newSeq(4));
+         _ = try cuda.memory.setAllocationLimit(null);
+@@ -118,6 +119,7 @@ test "Flash Next completion: failed asynchronous fill and an interrupted prefill
+         e.driver = &d;
+         e.stream = &stream;
+         e.eos = 1;
++        e.kv = .bf16;
+         e.round_graph = .{};
+         try t.expectError(error.NotReady, e.newSeq(4));
+         try t.expectEqual(Fake.allocations, Fake.frees);
+@@ -131,6 +133,7 @@ test "Flash Next completion: failed asynchronous fill and an interrupted prefill
+     e.driver = &d;
+     e.stream = &stream;
+     e.eos = 1;
++    e.kv = .bf16;
+     e.round_graph = .{};
+     var seq = try e.newSeq(4);
+     // Model a queued prefill kernel writing every owned sequence buffer before request refusal.

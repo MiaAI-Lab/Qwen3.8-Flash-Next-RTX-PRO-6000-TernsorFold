@@ -1,0 +1,60 @@
+diff --git a/zig/src/families/flashnext/cuda_batch_state.zig b/zig/src/families/flashnext/cuda_batch_state.zig
+index 0a6c9a4..03a6b77 100644
+--- a/zig/src/families/flashnext/cuda_batch_state.zig
++++ b/zig/src/families/flashnext/cuda_batch_state.zig
+@@ -161,6 +161,8 @@ pub const Kernels = struct {
+     lane: cuda.Function,
+     /// The prompt tiles that keep #952's bits (cuda_tile_kernels.zig).
+     tiles: tk.TileKernels,
++    /// The card's SMs, which set how many waves a tile's CTAs take (cuda_tiles.zig pickDown).
++    sms: usize,
+     native_lane: cuda.qmmf.Lane,
+     nvfp4: cuda.experts.Nvfp4Experts,
+     /// Prompt chunks' routed NVFP4 experts on shared-memory row tiles, the decode kernel's bits; null: not taken.
+@@ -211,6 +213,7 @@ pub const Kernels = struct {
+         var sms: c_int = 0;
+         try d.check(d.api.cuDeviceGet(&device, 0), "cuDeviceGet");
+         try d.check(d.api.cuDeviceGetAttribute(&sms, .multiprocessor_count, device), "cuDeviceGetAttribute");
++        k.sms = @intCast(sms);
+         k.nvfp4 = try cuda.experts.Nvfp4Experts.load(d, @intCast(sms));
+         errdefer k.nvfp4.unload();
+         k.expert_tile = if (tile_cfg.mode == .off) null else try cuda.nvfp4_tile.Tile.load(d, @intCast(sms), tile_cfg);
+diff --git a/zig/src/families/flashnext/cuda_tiles.zig b/zig/src/families/flashnext/cuda_tiles.zig
+index 0f572a7..46b937f 100644
+--- a/zig/src/families/flashnext/cuda_tiles.zig
++++ b/zig/src/families/flashnext/cuda_tiles.zig
+@@ -107,8 +107,7 @@ fn pickTile(comptime mts: []const usize, name: [:0]const u8, default: usize) usi
+ 
+ /// The down tile's rows (16 * mt) for `n` rows: its CTAs (two column tiles a row tile) run one a SM, so take the tile whose
+ /// waves cost least (waves x mt), the taller tile on a tie. TF_FLASHNEXT_HC2_DN fixes it.
+-fn pickDown(n: usize) usize {
+-    const sms = 48;
++fn pickDown(n: usize, sms: usize) usize {
+     const want = knobs.hc2Tile("TF_FLASHNEXT_HC2_DN");
+     for (tk.hcn_down_mt, 0..) |mt, i| if (mt == want) return i;
+     var best: usize = 0;
+@@ -134,7 +133,7 @@ pub fn readoutNative(tri: anytype, k: *const Kernels, stream: cuda.Stream, s: *S
+     const xs_act = s.xs_act + r0 * (low / 32) * 4;
+     const inj_ptr = if (hc_w.has_inj == 1) s.inj + r0 * streams * 2 else act;
+     const nc = dims / 256;
+-    const di = pickDown(n);
++    const di = pickDown(n, k.sms);
+     const bm_d = 16 * tk.hcn_down_mt[di];
+     var a: cuda.Args = .{};
+     for ([_]u64{ h, pss, hc_w.scale.ptr, down.codes, s.hc_part }) |v| a.add(v);
+@@ -158,9 +157,10 @@ pub fn experts(stream: cuda.Stream, f: cuda.Function, wn: usize, x: u64, x_strid
+ }
+ 
+ test "the fused read-out's down tile is the one whose waves over the SMs cost least" {
+-    // measured on a GB10 (48 SMs): 3072 rows 16 * 4 rows a CTA, 2048 rows 16 * 3, 1536 rows 16 * 4, 1024 rows 16 * 3
+-    try std.testing.expectEqual(@as(usize, 4), tk.hcn_down_mt[pickDown(3072)]);
+-    try std.testing.expectEqual(@as(usize, 3), tk.hcn_down_mt[pickDown(2048)]);
+-    try std.testing.expectEqual(@as(usize, 4), tk.hcn_down_mt[pickDown(1536)]);
+-    try std.testing.expectEqual(@as(usize, 3), tk.hcn_down_mt[pickDown(1024)]);
++    // an RTX PRO 6000 Blackwell's 188 SMs take a chunk's CTAs in one wave from a smaller tile
++    try std.testing.expectEqual(@as(usize, 3), tk.hcn_down_mt[pickDown(4096, 188)]);
++    try std.testing.expectEqual(@as(usize, 3), tk.hcn_down_mt[pickDown(3072, 188)]);
++    try std.testing.expectEqual(@as(usize, 2), tk.hcn_down_mt[pickDown(2048, 188)]);
++    try std.testing.expectEqual(@as(usize, 2), tk.hcn_down_mt[pickDown(1536, 188)]);
++    try std.testing.expectEqual(@as(usize, 2), tk.hcn_down_mt[pickDown(1024, 188)]);
+ }

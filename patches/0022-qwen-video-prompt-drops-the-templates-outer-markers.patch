@@ -1,0 +1,56 @@
+diff --git a/zig/src/server/images.zig b/zig/src/server/images.zig
+index 6eba3d3..0911d2d 100644
+--- a/zig/src/server/images.zig
++++ b/zig/src/server/images.zig
+@@ -206,6 +206,10 @@ pub fn expand(vision: ?api.Vision, fetch: ?Fetch, text: model_text.Text, cx: *Cx
+         const before = out_ids.items.len;
+         const after = close;
+         close = null;
++        if (outerVideoMark(v, ids, src)) {
++            if (src < history_len) hist -= 1;
++            continue;
++        }
+         if (t == v.image_token and prepared[k].pieces.len > 0) {
+             try image_pieces.place(cx.a, &out_ids, &key, &imgs, t, prepared[k]);
+             k += 1;
+@@ -246,6 +250,16 @@ pub fn expand(vision: ?api.Vision, fetch: ?Fetch, text: model_text.Text, cx: *Cx
+     return .{ .ids = out_ids.items, .history_len = hist, .images = imgs.items, .cache_key = key.items };
+ }
+ 
++/// Whether `ids[src]` is one of the markers a Qwen template writes around its video token. The processor the checkpoint was made with
++/// replaces the three tokens with the video's groups, each already between its own markers, so the outer pair never reaches the model.
++fn outerVideoMark(v: api.Vision, ids: []const u32, src: usize) bool {
++    const o = v.video orelse return false;
++    if (o.time_first == null) return false;
++    if (ids[src] == o.group_open) return src + 1 < ids.len and ids[src + 1] == o.video_token;
++    if (ids[src] == o.group_close) return src > 0 and ids[src - 1] == o.video_token;
++    return false;
++}
++
+ /// A video group's time as text at the end of `ids`; Qwen's "<X.Y seconds>" when `angle`.
+ fn appendTime(cx: *Cx, text: model_text.Text, ids: *std.ArrayList(u32), key: *std.ArrayList(u32), secs: f64, angle: bool) errors.Refused!void {
+     var buf: [64]u8 = undefined;
+@@ -479,6 +493,23 @@ fn fakeVideo(ctx: *anyopaque, a: std.mem.Allocator, src: api.VideoSource, max_to
+     return .{ .groups = groups, .times = times };
+ }
+ 
++test "the markers a Qwen template writes around its video token are told from every other marker" {
++    var dummy: u8 = 0;
++    const open: u32 = 6;
++    const shut: u32 = 7;
++    const offer: api.VideoOffer = .{ .prepare = fakeVideo, .video_token = 8, .group_open = open, .group_close = shut, .time_first = 8, .video_tokens = 64, .max_videos = 2, .max_frames = 256 };
++    const v: api.Vision = .{ .ctx = &dummy, .prepare = fakePrepare, .image_token = 9, .image_tokens = 64, .max_images = 4, .video = offer };
++    try std.testing.expect(outerVideoMark(v, &[_]u32{ 1, open, 8, shut }, 1));
++    try std.testing.expect(outerVideoMark(v, &[_]u32{ 1, open, 8, shut }, 3));
++    // an image's markers, and markers away from a video token, stay
++    try std.testing.expect(!outerVideoMark(v, &[_]u32{ open, 9, shut, open, 8, shut }, 0));
++    try std.testing.expect(!outerVideoMark(v, &[_]u32{ open, 9, shut, open, 8, shut }, 2));
++    // a family whose template writes no such pair keeps every marker
++    var plain = v;
++    plain.video.?.time_first = null;
++    try std.testing.expect(!outerVideoMark(plain, &[_]u32{ 1, open, 8, shut }, 1));
++}
++
+ test "video parts: counted from the request, refused past two, and the template's placeholders checked" {
+     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+     defer arena.deinit();

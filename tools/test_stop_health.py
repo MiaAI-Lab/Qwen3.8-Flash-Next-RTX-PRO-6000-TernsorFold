@@ -4,7 +4,7 @@
 stop.sh reads the number of running requests from the server's /health and compares it in `(( busy == 0 ))`, where bash
 evaluates the value as arithmetic: an array subscript on a variable that exists, `HOME[$(cmd)]`, runs `cmd` on the host
 (a name that does not exist stops stop.sh under `set -u`, before it stops the container). This runs the
-real stop.sh with a `docker` and a `curl` on PATH that report a running container and a /health answer whose `running`
+real stop.sh with a `docker` and a `curl` on PATH that report a running container and a /health answer whose `live.connections`
 is such a string, and checks that the command did not run, that the number of requests is read when it is a number, and that stop.sh
 still stops the container either way.
 
@@ -54,24 +54,21 @@ def main() -> int:
             (tmp / name).chmod(0o755)
         marker = tmp / "ran"
 
-        for what, health in (("a string subscript", '{"running": "HOME[$(touch %s)]"}' % marker),
-                             ("a string subscript in requests_running", '{"requests_running": "HOME[$(touch %s)]"}' % marker),
-                             ("an expression", '{"running": "1+HOME[$(touch %s)]"}' % marker),
-                             ("a name that is not set", '{"running": "nothing"}')):
+        for what, health in (("a string subscript", '{"live": {"connections": "HOME[$(touch %s)]"}}' % marker),
+                             ("an expression", '{"live": {"connections": "1+HOME[$(touch %s)]"}}' % marker),
+                             ("a name that is not set", '{"live": {"connections": "nothing"}}')):
             r, log = run_stop(tmp, health)
             check(not marker.exists(), f"{what} in /health does not run on the host")
             marker.unlink(missing_ok=True)
             check(r.returncode == 0 and "docker stop" in log and "docker rm -f" in log, f"stop.sh still stops the container ({what})")
             check("still running" not in r.stderr + r.stdout, f"{what} counts as no running requests")
 
-        for health, what in (('{"running": true}', "a boolean"), ('{"running": -3}', "a negative number"), ("not json", "no JSON"), ("", "no answer")):
+        for health, what in (('{"live": {"connections": true}}', "a boolean"), ('{"live": {"connections": -3}}', "a negative number"), ('{"status": "ok"}', "no live block"), ("not json", "no JSON"), ("", "no answer")):
             r, log = run_stop(tmp, health)
             check(r.returncode == 0 and "docker stop" in log and "still running" not in r.stderr + r.stdout, f"{what}: stops, counts 0")
 
-        r, log = run_stop(tmp, '{"running": 3}')
+        r, log = run_stop(tmp, '{"live": {"connections": 3}}')
         check(r.returncode == 0 and "3 request(s) still running will be cut off" in r.stderr + r.stdout, "a number of running requests is reported")
-        r, log = run_stop(tmp, '{"requests_running": 2}')
-        check("2 request(s) still running" in r.stderr + r.stdout, "requests_running is read when running is absent")
 
     print(f"{len(fails)} failed" if fails else "all passed")
     return 1 if fails else 0

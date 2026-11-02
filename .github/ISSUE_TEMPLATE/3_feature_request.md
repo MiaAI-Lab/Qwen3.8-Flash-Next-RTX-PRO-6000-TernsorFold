@@ -24,7 +24,7 @@ assignees: ""
 
      Examples that could fit this repo: an OpenAI-compatible client example, a
      systemd unit or compose file, a CI lint/validate step, support for a different
-     checkpoint or a two-Spark (--tp 2) configuration, a quality-regression suite.
+     checkpoint, a quality-regression suite.
 
      Describe the alternative solutions you've considered.
 -->

@@ -1,0 +1,163 @@
+diff --git a/zig/src/families/flashnext/cuda_lanes.zig b/zig/src/families/flashnext/cuda_lanes.zig
+index 98bb339..e328964 100644
+--- a/zig/src/families/flashnext/cuda_lanes.zig
++++ b/zig/src/families/flashnext/cuda_lanes.zig
+@@ -91,6 +91,8 @@ pub fn Namespace(comptime Tri: type) type {
+             learn_bytes: usize = 0,
+             /// What the prompt cache's copies are taken from: the backend itself (snap_* look up the owner stream).
+             target: *anyopaque,
++            /// A card with its own memory: prompt states go to pinned host memory, the native server's --prompt-cache-gib budget the host's.
++            host_snaps: bool = false,
+             /// Whether our own glue runs (no captured set given, or one without this family's entry points).
+             own_glue: bool = true,
+             follow: ?*const fn (*anyopaque) anyerror!void = null,
+@@ -144,6 +146,8 @@ pub fn Namespace(comptime Tri: type) type {
+             engine: *prompt.Engine,
+             vision: ?*@import("cuda_images.zig").Vision = null,
+             ranks: ?*ranks.Session = null,
++            /// Prompt states in page-locked host memory (Loaded.host_snaps).
++            host_snaps: bool = false,
+             head: ?*mtp.Head = null,
+             depth: usize = mtp.default_depth,
+             confidence: f64 = mtp.default_confidence,
+@@ -617,6 +621,7 @@ pub fn Namespace(comptime Tri: type) type {
+                 return try r.save(&l.seq);
+             }
+             if (l.draft) |*d| try self.ops().flushLate(&l.seq, d);
++            if (self.host_snaps) return try snap.saveHost(self.gpa, self.engine.driver, self.stream, &l.seq, if (l.draft) |*d| d else null);
+             return try snap.save(self.gpa, self.engine.driver, self.stream, &l.seq, if (l.draft) |*d| d else null);
+         }
+ 
+diff --git a/zig/src/families/flashnext/cuda_lanes_load.zig b/zig/src/families/flashnext/cuda_lanes_load.zig
+index d5734fd..7b85a14 100644
+--- a/zig/src/families/flashnext/cuda_lanes_load.zig
++++ b/zig/src/families/flashnext/cuda_lanes_load.zig
+@@ -51,6 +51,15 @@ pub fn open(comptime F: type, gpa: std.mem.Allocator, io: std.Io, ctx: *const cu
+     };
+     own.engine = try prompt.Engine.initRank(gpa, io, driver, &own.stream, dir, o.tp, o.rank);
+     own.engine.kv = if (o.kv8) .fp8 else .bf16;
++    // A discrete card keeps prompt states in the host's memory, where they take no room from the streams (two ranks keep theirs on the
++    // device). TF_FLASHNEXT_HOST_SNAPS=0 keeps them on the card.
++    if (o.tp == 1 and F.envUsize("TF_FLASHNEXT_HOST_SNAPS", 1) != 0) {
++        var device: c_int = 0;
++        var integrated: c_int = 0;
++        try driver.check(driver.api.cuDeviceGet(&device, 0), "cuDeviceGet");
++        try driver.check(driver.api.cuDeviceGetAttribute(&integrated, .integrated, device), "cuDeviceGetAttribute");
++        own.host_snaps = integrated == 0;
++    }
+     if (own.ranks) |r| {
+         r.engine = own.engine;
+         own.engine.collective = &r.collective;
+@@ -95,6 +104,7 @@ pub fn open(comptime F: type, gpa: std.mem.Allocator, io: std.Io, ctx: *const cu
+         .learns = if (o.slide) own else null,
+         .learn_bytes = if (o.slide) @import("cuda_train.zig").memory() else 0,
+         .target = own,
++        .host_snaps = own.host_snaps,
+         .own_glue = own.set == null,
+         .follow = if (o.rank != 0) F.follow else null,
+     };
+diff --git a/zig/src/families/flashnext/cuda_snap.zig b/zig/src/families/flashnext/cuda_snap.zig
+index 80e39a0..90dcb76 100644
+--- a/zig/src/families/flashnext/cuda_snap.zig
++++ b/zig/src/families/flashnext/cuda_snap.zig
+@@ -1,4 +1,5 @@
+-//! Flash Next prompt states for the shared prompt cache: one stream's caches after `at` tokens, copied on the device.
++//! Flash Next prompt states for the shared prompt cache: one stream's caches after `at` tokens, copied on the device or,
++//! on a card with its own memory, to page-locked host memory (saveHost).
+ 
+ const std = @import("std");
+ const cuda = @import("cuda");
+@@ -39,6 +40,8 @@ pub fn bytesWith(format: Kv, head_format: ?Kv, at: usize) usize {
+ pub const Snap = struct {
+     rank_id: u64 = 0,
+     buf: cuda.DeviceBuffer,
++    /// A state kept in the host's memory instead (saveHost): `buf` is then unused.
++    host: ?cuda.HostBuffer = null,
+     at: usize,
+     history: [2]i64,
+     head: bool,
+@@ -50,6 +53,9 @@ pub const Snap = struct {
+ 
+ const Way = enum { save, restore };
+ 
++/// Where a kept state's bytes are.
++const Place = union(enum) { device: u64, host: [*]u8 };
++
+ const Piece = struct { bufs: []cuda.DeviceBuffer, n: usize };
+ 
+ /// An attention cache's pieces for `at` rows: complete pooled blocks only (the rest pool again as later rows land).
+@@ -63,7 +69,7 @@ fn attnPieces(format: Kv, kc: []cuda.DeviceBuffer, vc: []cuda.DeviceBuffer, ikc:
+ }
+ 
+ /// Each piece of the sequence (and the head's cache, with `d`) to or from its place in the buffer at `base`.
+-fn move(stream: cuda.Stream, seq: *prompt.Seq, d: ?*Draft, base: u64, at: usize, way: Way) !void {
++fn move(stream: cuda.Stream, seq: *prompt.Seq, d: ?*Draft, place: Place, at: usize, way: Way) !void {
+     const dr = stream.d;
+     var off: u64 = 0;
+     var pieces: [11]Piece = undefined;
+@@ -78,8 +84,20 @@ fn move(stream: cuda.Stream, seq: *prompt.Seq, d: ?*Draft, base: u64, at: usize,
+     }
+     for (pieces[0..count]) |p| for (p.bufs) |b| {
+         if (p.n == 0) continue;
+-        const dst, const src = if (way == .save) .{ base + off, b.ptr } else .{ b.ptr, base + off };
+-        try dr.check(dr.api.cuMemcpyDtoDAsync_v2(dst, src, p.n, stream.handle), "cuMemcpyDtoDAsync");
++        switch (place) {
++            .device => |base| {
++                const dst, const src = if (way == .save) .{ base + off, b.ptr } else .{ b.ptr, base + off };
++                try dr.check(dr.api.cuMemcpyDtoDAsync_v2(dst, src, p.n, stream.handle), "cuMemcpyDtoDAsync");
++            },
++            .host => |base| {
++                const at_host = base + @as(usize, @intCast(off));
++                if (way == .save) {
++                    try dr.check(dr.api.cuMemcpyDtoHAsync_v2(at_host, b.ptr, p.n, stream.handle), "cuMemcpyDtoHAsync");
++                } else {
++                    try dr.check(dr.api.cuMemcpyHtoDAsync_v2(b.ptr, at_host, p.n, stream.handle), "cuMemcpyHtoDAsync");
++                }
++            },
++        }
+         off += p.n;
+     };
+     std.debug.assert(off == bytesWith(seq.kv, if (d) |h| h.kv else null, at));
+@@ -94,7 +112,22 @@ pub fn save(gpa: std.mem.Allocator, driver: *const cuda.Driver, stream: cuda.Str
+     errdefer gpa.destroy(snap);
+     snap.* = .{ .buf = try cuda.DeviceBuffer.alloc(driver, bytesWith(seq.kv, if (d != null) head_kv else null, at)), .at = at, .history = seq.history, .head = d != null, .kv = seq.kv, .head_kv = head_kv };
+     errdefer snap.buf.free();
+-    try move(stream, seq, d, snap.buf.ptr, at, .save);
++    try move(stream, seq, d, .{ .device = snap.buf.ptr }, at, .save);
++    try stream.synchronize();
++    return snap;
++}
++
++/// save's copy in page-locked host memory: a card with its own memory keeps its prompt cache in the host's RAM, not in what the streams leave of the card.
++pub fn saveHost(gpa: std.mem.Allocator, driver: *const cuda.Driver, stream: cuda.Stream, seq: *prompt.Seq, d: ?*Draft) !*Snap {
++    const at = seq.fed;
++    if (d) |h| if (h.len != at or h.drafted != 0) return error.NotAtMark;
++    const head_kv: Kv = if (d) |h| h.kv else .bf16;
++    const snap = try gpa.create(Snap);
++    errdefer gpa.destroy(snap);
++    var host = try cuda.HostBuffer.alloc(driver, bytesWith(seq.kv, if (d != null) head_kv else null, at));
++    errdefer host.free();
++    snap.* = .{ .buf = undefined, .host = host, .at = at, .history = seq.history, .head = d != null, .kv = seq.kv, .head_kv = head_kv };
++    try move(stream, seq, d, .{ .host = host.bytes.ptr }, at, .save);
+     try stream.synchronize();
+     return snap;
+ }
+@@ -106,7 +139,8 @@ pub fn restore(stream: cuda.Stream, seq: *prompt.Seq, d: ?*Draft, snap: *const S
+     if (d) |h| if (!snap.head or snap.at > h.cap) return error.NoHeadState;
+     if (d) |h| if (h.kv != snap.head_kv) return error.NoHeadState;
+     // a state with the head's rows serves a stream without drafts too: those rows stay in the buffer
+-    try move(stream, seq, d, snap.buf.ptr, snap.at, .restore);
++    const place: Place = if (snap.host) |h| .{ .host = h.bytes.ptr } else .{ .device = snap.buf.ptr };
++    try move(stream, seq, d, place, snap.at, .restore);
+     try stream.synchronize();
+     seq.history = snap.history;
+     seq.fed = snap.at;
+@@ -118,7 +152,7 @@ pub fn restore(stream: cuda.Stream, seq: *prompt.Seq, d: ?*Draft, snap: *const S
+ 
+ pub fn drop(gpa: std.mem.Allocator, stream: cuda.Stream, snap: *Snap) void {
+     stream.synchronize() catch {};
+-    snap.buf.free();
++    if (snap.host) |*h| h.free() else snap.buf.free();
+     gpa.destroy(snap);
+ }
+ 

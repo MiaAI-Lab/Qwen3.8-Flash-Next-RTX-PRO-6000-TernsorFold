@@ -17,7 +17,7 @@
 
 <!--
 
-    Add the list of issues related to this PR from the [issue tracker](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold/issues).
+    Add the list of issues related to this PR from the [issue tracker](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-RTX-PRO-6000-TernsorFold/issues).
     Indicate which of these issues are resolved or fixed by this PR, like #XXXX, where XXXX is the issue number.
 
 -->

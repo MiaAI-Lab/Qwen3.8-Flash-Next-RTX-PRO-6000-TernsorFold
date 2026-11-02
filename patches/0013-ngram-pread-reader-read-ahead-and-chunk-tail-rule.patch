@@ -803,7 +803,7 @@ index 0000000..7641767
 +    return std.math.floorPowerOfTwo(usize, @max(1, mib << 20) / @sizeOf(Slot));
 +}
 +
-+/// TF_FLASHNEXT_GATHER_THREADS: read-ahead threads (default 128, the most; a Spark's drive reads 100 us a row at that depth,
++/// TF_FLASHNEXT_GATHER_THREADS: read-ahead threads (default 128, the most; one NVMe drive read 100 us a row at that depth,
 +/// 160 us at 64 and 230 us at 32; 0: no read-ahead, every row is read by the gather).
 +pub fn workers() usize {
 +    return envOr("TF_FLASHNEXT_GATHER_THREADS", 128);
