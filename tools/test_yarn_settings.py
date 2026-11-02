@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# What an empty RTX PRO 6000 reports free on this machine (README, KV and memory: 95.04 GiB).
+# What an empty RTX PRO 6000 reports free on this machine (docs/details.md, KV and memory: 95.04 GiB).
 EMPTY_CARD_MIB = 97321
 NAMES = ("YARN", "CONTEXT", "PARALLEL", "TENSORFOLD_MEMORY_RESERVE_GIB", "PROMPT_CACHE_GIB")
 

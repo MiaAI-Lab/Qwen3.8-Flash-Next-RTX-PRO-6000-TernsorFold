@@ -162,6 +162,8 @@ This recipe no longer applies those patches (the serving path is the Zig engine)
   on the GPU in a container.
 - **[GitHub Container Registry](https://ghcr.io)**: hosting the prebuilt image, when one is published.
 
+- **[xgrammar](https://github.com/mlc-ai/xgrammar)** by the MLC-AI team (Apache-2.0), the grammar runtime shipped as `libtfgrammar.so` in TensorFold's release archive; **libjpeg-turbo** and **libwebp** decode images.
+
 ## Hardware
 
 - **[NVIDIA RTX PRO 6000 Blackwell](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000/)** (96 GB, sm_120):
