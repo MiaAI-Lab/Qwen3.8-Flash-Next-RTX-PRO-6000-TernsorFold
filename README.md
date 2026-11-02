@@ -95,10 +95,58 @@ Set these in the environment (`PARALLEL=2 ./start.sh`) or in `.env` next to `sta
 - [`docs/details.md`](docs/details.md): every setting, patch, check and measurement, plus the memory breakdown and API notes
 - [`CHANGELOG.md`](CHANGELOG.md): what changed, with results
 
-## License and credits
+## License
 
 MIT, see [`LICENSE`](LICENSE); this covers the repository's scripts only. The weights are downloaded from Hugging Face under their own terms: the [NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/) and the Qwen Community License 1.0. The `ABLIT=1` overlay also has its own Responsible Use Agreement.
 
 The image `scripts/prepare.sh` builds is based on NVIDIA's PyTorch container, under the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and the [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/). By pulling or running the image you accept them. See [`NOTICE`](NOTICE).
 
-Built on [TensorFold](https://github.com/ashhart/TensorFold) by Ash Hart and the TensorFold contributors, [Qwen3.8 Flash Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) by the Qwen team, and NVIDIA's FP4 export. Everyone else is in [`CREDITS.md`](CREDITS.md).
+## Credits
+
+- **Engine:** [TensorFold](https://github.com/ashhart/TensorFold) and its Zig engine (`tensorfold-native`, release
+  [v1.1.4](https://github.com/ashhart/TensorFold/releases/tag/v1.1.4)) by Ash Hart ([ashhart](https://github.com/ashhart)) and the
+  [TensorFold contributors](https://github.com/ashhart/TensorFold/graphs/contributors). The Flash Next CUDA engine this recipe builds on is TensorFold's own, written by Ash Hart and the TensorFold contributors.
+- **Zig CUDA serving path and CUDA family registry:** Jürgen Schmied ([jschmied](https://github.com/jschmied)), in
+  [TensorFold PR #443](https://github.com/ashhart/TensorFold/pull/443)
+  (commit [`59e77e8`](https://github.com/ashhart/TensorFold/commit/59e77e8f4b875ce0e863a8c896fc8e424bc539ac)).
+- **Patches 0001 to 0017:** written by MiaAI-Lab (Mia's AI Lab), MIT License. They modify
+  TensorFold's own Flash Next CUDA engine (code by Ash Hart and the TensorFold contributors, under TensorFold's licenses). The list, patch by patch, with where each
+  idea comes from, is in [`CREDITS.md`](CREDITS.md): the vision tower (0001, 0002), fp8 KV (0003, 0005; the format adapted from MiaAI-Lab's GLM recipe patch 0038), prompt
+  expert tile and prefill (0004, 0006, 0014, 0015), sampled streams (0007 to 0011; the GPU top-k idea from MiaAI-Lab's DeepSeek recipe), rollback, `pread` n-gram reader and
+  decode (0012, 0013, 0016, 0017; 0013, 0016 and 0017 carry forward parts of the earlier db281878 series, whose NVIDIA FP4 port is by MiaAI-Lab from
+  the TensorFold Contributors' Python implementation of the same formats).
+- **Patch 0025:** written by MiaAI-Lab for the CUDA path, reusing TensorFold's own YaRN table (`rotary_config.zig`) and following its Metal engine's static x4 design.
+- **Patches 0018 to 0024:** written by MiaAI-Lab. The host tier of `0019` follows the idea of MiaAI-Lab's GLM recipe on RTX PRO 6000, whose scripts also gave this port its GPU checks and x86_64 build inputs. FFmpeg (LGPL) is in the image through `libtfvideo`.
+- **Earlier db281878 series** (in this repository's history): free after drain and admission reclaim (patch 0029) and image prompts in the prompt cache (patch 0030) by [tempeste](https://github.com/tempeste), now built
+  into TensorFold v1.1.4; sliced fills one at a time (patch 0021) by [BadAd84](https://github.com/BadAd84) (PR #53).
+- **Model:** [Qwen3.8 Flash Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) by the Qwen team (Alibaba).
+- **Checkpoint:** NVIDIA's [FP4 QAD export](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local) (Model Optimizer).
+- **`ABLIT=1` overlay:** the Keys "house-qsa" abliteration overlay, [`drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47`](https://huggingface.co/drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47), by [drowzeys](https://huggingface.co/drowzeys). `scripts/ablit_view.py`, which grafts it in, is MiaAI-Lab's.
+- **AZ checkpoint** (patch `0024` was written for it; no longer served): [`azampatti/Qwen3.8-Flash-Next-FP4-Local-AZ`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-FP4-Local-AZ) by [azampatti](https://huggingface.co/azampatti), built on NVIDIA's export.
+- **INT4 checkpoint** (not served by this engine; the source of AZ's shared expert): [azampatti](https://huggingface.co/azampatti)'s
+  [`azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound)
+  (the top-5 expert cut, the shared-expert healing and the checkpoint), with its AutoRound int4 quantization by
+  [Intel](https://huggingface.co/Intel/Qwen3.8-Flash-Next-W4A16-AutoRound) and its hybrid checkpoint and FP8 n-gram table by
+  [Saren-Arterius](https://github.com/Saren-Arterius) ([`Saren/Qwen3.8-Flash-Next-ple-table-fp8`](https://huggingface.co/Saren/Qwen3.8-Flash-Next-ple-table-fp8)).
+- **Previous checkpoint** (before the Zig engine): [`Vontra/Qwen3.8-Flash-Next-MLX-4bit-MTP`](https://huggingface.co/Vontra/Qwen3.8-Flash-Next-MLX-4bit-MTP)
+  by [Vontra](https://huggingface.co/Vontra).
+- **Image and video input:** adapted from MiaAI-Lab's earlier patches 0008 and 0009 and from TensorFold's vision code by Ash Hart and the
+  TensorFold contributors. Decoding uses libjpeg-turbo, libwebp and [FFmpeg](https://ffmpeg.org/) through TensorFold's `libtfvideo`.
+- **FP8 KV format** (`KV_DTYPE=fp8`): adapted from MiaAI-Lab's GLM recipe patch `0038-glm-kv-fp8` in
+  [GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold).
+- **Full-window admission fix and `tools/context_boundary.py`:** [321sssrt-bit](https://github.com/321sssrt-bit)
+  ([issue #1](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Dual-DGX-Sparks-TensorFold/issues/1),
+  [PR #2](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Dual-DGX-Sparks-TensorFold/pull/2)): a request whose prompt plus `max_tokens` equals the window is
+  admitted, because the engine already keeps the draft rows beyond that window.
+- **Prompt-chunk change** on the earlier Python engine: [MovieMaker93](https://github.com/MovieMaker93)
+  ([TensorFold #40](https://github.com/ashhart/TensorFold/pull/40)).
+- **Language draft vocabularies** of the earlier Python recipe: Javier ([jvr0x](https://github.com/jvr0x))
+  ([#84](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark/pull/84)); that draft-language image is not built anymore.
+- **RoCE all-gather:** the one-shot all-gather in the engine implements the RoCEnante protocol of [b12x](https://github.com/local-inference-lab/b12x) by
+  local-inference-lab; this recipe leaves it off.
+- **Grammar runtime:** [xgrammar](https://github.com/mlc-ai/xgrammar) by the MLC-AI team (Apache-2.0), shipped as `libtfgrammar.so` in TensorFold's release archive.
+- **[Zig](https://ziglang.org)** by the Zig Software Foundation and the Zig contributors; **[FFmpeg](https://ffmpeg.org/)** decodes video; the image is based on NVIDIA's
+  [PyTorch container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch).
+- **Benchmarks:** the performance numbers were measured with [sparkDash](https://github.com/MiaAI-Lab/sparkDash) by MiaAI-Lab.
+
+The full list is in [`CREDITS.md`](CREDITS.md).
