@@ -27,7 +27,7 @@ The reference behind the [README](../README.md): every setting, patch, API note,
 | 64k | 5,532.5 | 7,024.4 | 8,357.7 | 11.92 s | 9.41 s | 7.92 s |
 | 128k | 5,217.4 | 6,593.9 | 7,886.9 | 25.20 s | 19.95 s | 16.69 s |
 
-Prompt tokens at 300, 400 and 600 W: 4k is 4,134, 4,137 and 4,132; 8k is 8,231, 8,234 and 8,229; 16k is 16,423, 16,426 and 16,425; 32k is 32,805, 32,802 and 32,806; 64k is 65,574, 65,575 and 65,572; 128k is 131,113, 131,111 and 131,113. The 400 W and 600 W runs overlapped a 5 GB checkpoint download on the same host, at a host load of about 1 on 24 threads.
+Prompt tokens at 300, 400 and 600 W: 4k is 4,134, 4,137 and 4,132; 8k is 8,231, 8,234 and 8,229; 16k is 16,423, 16,426 and 16,425; 32k is 32,805, 32,802 and 32,806; 64k is 65,574, 65,575 and 65,572; 128k is 131,113, 131,111 and 131,113. The 400 W and 600 W prefill runs each overlapped a full 96 GiB checkpoint download onto the NVMe drive that holds the n-gram table (host load about 1 on 24 threads), so they may read a little low. The 300 W run did not overlap one.
 
 ### Earlier run: patches `0001` to `0017`, with code decode
 
@@ -117,7 +117,7 @@ These ran only on azampatti's 5-expert FP4 cut (AZ), which this recipe no longer
 
 - Linux x86_64 with one RTX PRO 6000 Blackwell (96 GB, sm_120) and nothing else large on it: 3 full windows need 96,845 MiB free at start, which an empty card has (97,322 MiB here) and a card driving a desktop may not. `start.sh` stops before
   launching below that (`GPU_NEED_MIB`). `GPU` picks the card by its `nvidia-smi` index. On a machine with two cards, take the one without the monitors: on the other one use `PARALLEL=2`.
-- A driver for CUDA 13, Docker with the NVIDIA container runtime, and your user in the `docker` group.
+- A driver for CUDA 13, Docker with the NVIDIA container runtime, `python3`, and your user in the `docker` group.
 - Host memory: the weights stage through it while they load (`MemAvailable` stayed near 71 GiB of 89 during a load here), and the prompt cache pins up to 16 GiB (`PROMPT_CACHE_GIB`, at most half of what is available at start) as states are kept. Developed on 89 GB of RAM.
 - ~160 GB free disk on a fresh machine: ~96 GiB for the checkpoint under `~/.cache/huggingface` and the image under
   Docker's root. `scripts/prepare.sh` checks both. An NVMe drive for the checkpoint: the host reads n-gram rows from it while serving.

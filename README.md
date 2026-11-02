@@ -24,7 +24,7 @@ Serve **Qwen3.8 Flash Next** from one NVIDIA RTX PRO 6000 Blackwell (96 GB) thro
 ## Requirements
 
 - Linux x86_64 with one RTX PRO 6000 Blackwell and nothing else large on it: a start needs 96,845 MiB free on the card
-- A driver for CUDA 13, Docker with the NVIDIA container runtime, and your user in the `docker` group
+- A driver for CUDA 13, Docker with the NVIDIA container runtime, `python3`, and your user in the `docker` group
 - About 160 GB of free disk, with the checkpoint on an NVMe drive
 - Developed on 89 GB of RAM; the prompt cache pins up to 16 GiB of it
 
@@ -34,7 +34,7 @@ Serve **Qwen3.8 Flash Next** from one NVIDIA RTX PRO 6000 Blackwell (96 GB) thro
 ./start.sh
 ```
 
-The first run builds the engine (about 5 minutes) and downloads the checkpoint (about 96 GiB). Later starts take about 2.5 minutes.
+The first run does the setup by itself: it builds the engine (about 5 minutes) and downloads the checkpoint (about 96 GiB, about 8 minutes here), with no `hf` CLI or Hugging Face login needed. Later starts take about 2.5 minutes.
 
 ```bash
 curl -s http://<host>:8888/v1/chat/completions -H 'Content-Type: application/json' -d '{
