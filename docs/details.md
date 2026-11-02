@@ -39,6 +39,24 @@ MTP drafts pay only when they are accepted, so decode speed depends on the text,
 | 65,575 | 5,437 tok/s | 12.13 s |
 | 131,110 | 5,184 tok/s | 25.36 s |
 
+### Quality
+
+sparkDash's `QualityBench`: 797 fixed questions at temperature 0, 2 requests at a time, one run each, on the same image with all 25 patches, with a few other clients' requests mixed in. The overall figure averages the 8 categories equally. AZ is azampatti's 5-expert FP4 cut, which this recipe no longer serves.
+
+| Category | Questions | NVIDIA's FP4 | AZ | Only NVIDIA right | Only AZ right |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QA | 150 | 91.3% | 89.3% | 9 | 6 |
+| Reasoning | 40 | 100% | 100% | 0 | 0 |
+| Arithmetic chain | 40 | 100% | 100% | 0 | 0 |
+| State tracking | 40 | 100% | 95.0% | 2 | 0 |
+| GSM8K | 200 | 97.5% | 97.0% | 1 | 0 |
+| MMLU | 285 | 90.2% | 88.4% | 10 | 5 |
+| Instruction following | 40 | 95.0% | 92.5% | 2 | 1 |
+| Long-context recall | 2 | 100% | 100% | 0 | 0 |
+| **Overall** | **797** | **96.8%** (749 right) | **95.3%** (737 right) | **24** | **12** |
+
+Paired question by question, the difference is not significant at the usual 5% level (McNemar exact test, p = 0.065). No category's difference is significant on its own.
+
 **The speed settings have not been measured on this card yet.** The tile, thread and draft defaults in `scripts/config.sh` were carried over from a different GPU; they change speed only, never a reply. `tools/sweep.py` compares them here. Patch `0023` already chooses the fused read-out's down tile from this card's 188 SMs.
 
 ### Checks on this card

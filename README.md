@@ -65,6 +65,8 @@ At a 300 W power limit, on NVIDIA's FP4 with patches `0001` to `0017`, one run e
 | 32,804 | 5,637 tok/s | 5.88 s |
 | 131,110 | 5,184 tok/s | 25.36 s |
 
+**Quality:** 96.8% on sparkDash's quality bench, averaged over its 8 categories (749 of 797 questions at temperature 0, one run). The breakdown is in [`docs/details.md`](docs/details.md#quality).
+
 ## Images and video
 
 Send them as OpenAI-style `image_url` and `video_url` content parts, as data URLs (`VISION_URLS=1` also allows public `https://` URLs). `VISION=0` serves text only.
