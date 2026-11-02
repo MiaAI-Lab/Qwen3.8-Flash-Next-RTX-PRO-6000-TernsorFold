@@ -4,6 +4,31 @@ The reference behind the [README](../README.md): every setting, patch, API note,
 
 ## Performance
 
+### Official numbers
+
+**Run with the card's power limit set to 300 W** (its default is 600 W, so these are not its best). NVIDIA's FP4 with all 25 patches, 3 requests at once at 262,144 tokens each, fp8 KV, vision and MTP drafts on, measured with [sparkDash](https://github.com/MiaAI-Lab/sparkDash). How the figures are taken is under the earlier run below.
+
+**Decode, prose** (temperature 0.7, thinking on)
+
+| Requests at once | Aggregate | Per request | TTFT |
+| ---: | ---: | ---: | ---: |
+| 1 | 213.4 tok/s | 213.4 tok/s | 35 ms |
+| 2 | 371.7 tok/s | 189.9 tok/s | 110 ms |
+| 3 | 452.9 tok/s | 157.0 tok/s | 110 ms |
+
+**Prefill**
+
+| Prompt | Tokens | Prefill | TTFT |
+| --- | ---: | ---: | ---: |
+| 4k | 4,134 | 6,283.3 tok/s | 729 ms |
+| 8k | 8,231 | 6,074.2 tok/s | 1.43 s |
+| 16k | 16,423 | 5,949.0 tok/s | 2.83 s |
+| 32k | 32,805 | 5,691.1 tok/s | 5.83 s |
+| 64k | 65,574 | 5,532.5 tok/s | 11.92 s |
+| 128k | 131,113 | 5,217.4 tok/s | 25.20 s |
+
+### Earlier run: patches `0001` to `0017`, with code decode
+
 One RTX PRO 6000 with its **power limit at 300 W** (the card's own is 600 W, so these are not its best), on PCIe Gen5 x8 with a Ryzen 9 9900X, nothing else on the GPU. `nvidia/Qwen3.8-Flash-Next-FP4-Local`, 262,144-token
 window, 3 requests at once, fp8 KV, vision on, MTP drafts, patches `0001` to `0017` (`0018` to `0025`, added after this run, add video input, move prompt states to host memory, choose one prompt tile by the card's SM count, which can change prefill speed, read the routing widths from the checkpoint, and add the long window). Measured with [sparkDash](https://github.com/MiaAI-Lab/sparkDash)'s own `DecodeBench` and `PrefillBench` code on the same machine, one run each. Prose: temperature 0.7, thinking on. Code: temperature 0,
 thinking off. Each reply is 400 tokens. Aggregate is all the streams' tokens over the time from the first token to the last; per request is the median stream; TTFT is the time to the first token.

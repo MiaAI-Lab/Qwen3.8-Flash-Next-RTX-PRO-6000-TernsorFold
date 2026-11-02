@@ -51,19 +51,26 @@ DRY_RUN=1 ./start.sh                    # show what a start would do, and change
 
 ## Performance
 
-At a 300 W power limit, on NVIDIA's FP4 with patches `0001` to `0017`, one run each with [sparkDash](https://github.com/MiaAI-Lab/sparkDash). Decode is the aggregate over all requests, in tok/s.
+**Run with the card's power limit set to 300 W** (its default is 600 W, so these are not its best). NVIDIA's FP4 with all 25 patches, 3 requests at once at 262,144 tokens each, fp8 KV, vision and MTP drafts on, measured with [sparkDash](https://github.com/MiaAI-Lab/sparkDash).
 
-| Requests at once | Prose | Code |
-| ---: | ---: | ---: |
-| 1 | 171.4 | 364.9 |
-| 2 | 298.5 | 539.5 |
-| 3 | 406.4 | 647.8 |
+**Decode, prose** (temperature 0.7, thinking on)
 
-| Cold prompt, tokens | Prefill | First token |
-| ---: | ---: | ---: |
-| 4,130 | 6,044 tok/s | 0.75 s |
-| 32,804 | 5,637 tok/s | 5.88 s |
-| 131,110 | 5,184 tok/s | 25.36 s |
+| Requests at once | Aggregate | Per request | TTFT |
+| ---: | ---: | ---: | ---: |
+| 1 | 213.4 tok/s | 213.4 tok/s | 35 ms |
+| 2 | 371.7 tok/s | 189.9 tok/s | 110 ms |
+| 3 | 452.9 tok/s | 157.0 tok/s | 110 ms |
+
+**Prefill**
+
+| Prompt | Tokens | Prefill | TTFT |
+| --- | ---: | ---: | ---: |
+| 4k | 4,134 | 6,283.3 tok/s | 729 ms |
+| 8k | 8,231 | 6,074.2 tok/s | 1.43 s |
+| 16k | 16,423 | 5,949.0 tok/s | 2.83 s |
+| 32k | 32,805 | 5,691.1 tok/s | 5.83 s |
+| 64k | 65,574 | 5,532.5 tok/s | 11.92 s |
+| 128k | 131,113 | 5,217.4 tok/s | 25.20 s |
 
 **Quality:** 96.8% on sparkDash's quality bench, averaged over its 8 categories (749 of 797 questions at temperature 0, one run). The breakdown is in [`docs/details.md`](docs/details.md#quality).
 
