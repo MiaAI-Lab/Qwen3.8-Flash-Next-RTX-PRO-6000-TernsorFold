@@ -131,16 +131,6 @@ The image `scripts/prepare.sh` builds is based on NVIDIA's PyTorch container, un
 - **Model:** [Qwen3.8 Flash Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) by the Qwen team (Alibaba).
 - **Checkpoint:** NVIDIA's [FP4 QAD export](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local) (Model Optimizer).
 - **`ABLIT=1` overlay:** the Keys "house-qsa" abliteration overlay, [`drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47`](https://huggingface.co/drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-FP4-QAD-house-qsa-L3-47), by [drowzeys](https://huggingface.co/drowzeys). `scripts/ablit_view.py`, which grafts it in, is MiaAI-Lab's.
-- **AZ checkpoint** (patch `0024` was written for it; no longer served): [`azampatti/Qwen3.8-Flash-Next-FP4-Local-AZ`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-FP4-Local-AZ) by [azampatti](https://huggingface.co/azampatti), built on NVIDIA's export.
-- **INT4 checkpoint** (not served by this engine; the source of AZ's shared expert): [azampatti](https://huggingface.co/azampatti)'s
-  [`azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound`](https://huggingface.co/azampatti/Qwen3.8-Flash-Next-125B-A5B-INT4-AutoRound)
-  (the top-5 expert cut, the shared-expert healing and the checkpoint), with its AutoRound int4 quantization by
-  [Intel](https://huggingface.co/Intel/Qwen3.8-Flash-Next-W4A16-AutoRound) and its hybrid checkpoint and FP8 n-gram table by
-  [Saren-Arterius](https://github.com/Saren-Arterius) ([`Saren/Qwen3.8-Flash-Next-ple-table-fp8`](https://huggingface.co/Saren/Qwen3.8-Flash-Next-ple-table-fp8)).
-- **Previous checkpoint** (before the Zig engine): [`Vontra/Qwen3.8-Flash-Next-MLX-4bit-MTP`](https://huggingface.co/Vontra/Qwen3.8-Flash-Next-MLX-4bit-MTP)
-  by [Vontra](https://huggingface.co/Vontra).
-- **Image and video input:** adapted from MiaAI-Lab's earlier patches 0008 and 0009 and from TensorFold's vision code by Ash Hart and the
-  TensorFold contributors. Decoding uses libjpeg-turbo, libwebp and [FFmpeg](https://ffmpeg.org/) through TensorFold's `libtfvideo`.
 - **FP8 KV format** (`KV_DTYPE=fp8`): adapted from MiaAI-Lab's GLM recipe patch `0038-glm-kv-fp8` in
   [GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold).
 - **Full-window admission fix and `tools/context_boundary.py`:** [321sssrt-bit](https://github.com/321sssrt-bit)
