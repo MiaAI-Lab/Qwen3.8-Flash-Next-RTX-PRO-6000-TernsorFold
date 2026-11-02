@@ -6,26 +6,28 @@ The reference behind the [README](../README.md): every setting, patch, API note,
 
 ### Official numbers
 
-**Run with the card's power limit set to 300 W** (its default is 600 W, so these are not its best). NVIDIA's FP4 with all 25 patches, 3 requests at once at 262,144 tokens each, fp8 KV, vision and MTP drafts on, measured with [sparkDash](https://github.com/MiaAI-Lab/sparkDash). How the figures are taken is under the earlier run below.
+**Speed depends on the card's power limit, so the numbers are shown at each limit measured** (the card's default is 600 W). NVIDIA's FP4 with all 25 patches, 3 requests at once at 262,144 tokens each, fp8 KV, vision and MTP drafts on, one run at each limit with [sparkDash](https://github.com/MiaAI-Lab/sparkDash). How the figures are taken is under the earlier run below.
 
-**Decode, prose** (temperature 0.7, thinking on)
+**Decode, prose** (tok/s; temperature 0.7, thinking on). Not measured at 600 W yet.
 
-| Requests at once | Aggregate | Per request | TTFT |
-| ---: | ---: | ---: | ---: |
-| 1 | 213.4 tok/s | 213.4 tok/s | 35 ms |
-| 2 | 371.7 tok/s | 189.9 tok/s | 110 ms |
-| 3 | 452.9 tok/s | 157.0 tok/s | 110 ms |
+| Requests at once | Aggregate, 300 W | Aggregate, 400 W | Per request, 300 W | Per request, 400 W | TTFT, 300 W | TTFT, 400 W |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 213.4 | 271.4 | 213.4 | 271.4 | 35 ms | 36 ms |
+| 2 | 371.7 | 395.7 | 189.9 | 202.2 | 110 ms | 111 ms |
+| 3 | 452.9 | 503.7 | 157.0 | 173.1 | 110 ms | 109 ms |
 
-**Prefill**
+**Prefill** (tok/s)
 
-| Prompt | Tokens | Prefill | TTFT |
-| --- | ---: | ---: | ---: |
-| 4k | 4,134 | 6,283.3 tok/s | 729 ms |
-| 8k | 8,231 | 6,074.2 tok/s | 1.43 s |
-| 16k | 16,423 | 5,949.0 tok/s | 2.83 s |
-| 32k | 32,805 | 5,691.1 tok/s | 5.83 s |
-| 64k | 65,574 | 5,532.5 tok/s | 11.92 s |
-| 128k | 131,113 | 5,217.4 tok/s | 25.20 s |
+| Prompt | 300 W | 400 W | 600 W | TTFT, 300 W | TTFT, 400 W | TTFT, 600 W |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4k | 6,283.3 | 8,321.9 | 9,218.8 | 729 ms | 567 ms | 518 ms |
+| 8k | 6,074.2 | 7,792.2 | 8,811.8 | 1.43 s | 1.13 s | 1.00 s |
+| 16k | 5,949.0 | 7,580.0 | 8,878.6 | 2.83 s | 2.24 s | 1.92 s |
+| 32k | 5,691.1 | 7,245.7 | 8,519.9 | 5.83 s | 4.60 s | 3.92 s |
+| 64k | 5,532.5 | 7,024.4 | 8,357.7 | 11.92 s | 9.41 s | 7.92 s |
+| 128k | 5,217.4 | 6,593.9 | 7,886.9 | 25.20 s | 19.95 s | 16.69 s |
+
+Prompt tokens at 300, 400 and 600 W: 4k is 4,134, 4,137 and 4,132; 8k is 8,231, 8,234 and 8,229; 16k is 16,423, 16,426 and 16,425; 32k is 32,805, 32,802 and 32,806; 64k is 65,574, 65,575 and 65,572; 128k is 131,113, 131,111 and 131,113. The 400 W and 600 W runs overlapped a 5 GB checkpoint download on the same host, at a host load of about 1 on 24 threads.
 
 ### Earlier run: patches `0001` to `0017`, with code decode
 

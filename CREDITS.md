@@ -167,7 +167,7 @@ This recipe no longer applies those patches (the serving path is the Zig engine)
 ## Hardware
 
 - **[NVIDIA RTX PRO 6000 Blackwell](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000/)** (96 GB, sm_120):
-  every number in the README was measured on one, at a 300 W power limit.
+  every number in the README was measured on one, at the power limit shown with it.
 
 ## README
 
